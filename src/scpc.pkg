@@ -1,16 +1,16 @@
-v 2.1.0
+v 3
 d 'scpc': High-Performance Spatial Correlation Robust Inference via SCPC.
 d
-d This Stata package implements the (Conditional-) Spatial Correlation Principle Components 
-d (C-SCPC) method of Müller and Watson (2022, 2023) for the construction of confidence 
+d This Stata package implements the (Conditional-) Spatial Correlation Principal Components
+d (C-SCPC) method of Müller and Watson (2022, 2023) for the construction of confidence
 d intervals that account for many forms of spatial correlation.
-d Accelerated with pure-Mata routines (2x-5x speedup), 64-point Gauss-Legendre quadrature,
-d Brent root-finding, vectorized PRNG sampling, and unconditional critical value caching.
+d Pure-Mata implementation with adaptive angular quadrature, safeguarded scale solving,
+d bounded covariance memory, and unconditional critical-value caching.
 d
 d KW: spatial correlation
 d KW: HAC
 d KW: t-statistic
-d 
+d
 d Requires: Stata version 13
 d
 d Distribution Date: 20261110

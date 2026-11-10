@@ -6,20 +6,13 @@
 
 This repository contains the high-performance, pure-Mata modernization of the **SCPC (Spatial Correlation Principal Components)** Stata package developed by **Ulrich K. Müller and Mark W. Watson**, maintained by **Sascha O. Becker, P. David Boll, and Hans-Joachim Voth** as part of the [`spatial-spur`](https://github.com/spatial-spur) econometrics ecosystem.
 
-Version 2.1.0 delivers a **2.0× to 2.5× end-to-end performance improvement** while remaining **100% pure Mata** (no external compilers, no C plugins, no dependencies).
+This branch uses pure Mata. Correctness is checked against analytic probabilities, invariance properties, and defining covariance equations; historical timings are not a release guarantee.
 
 ---
 
 ## Performance Overview
 
-| Sample Size ($N$) | Mode | Upstream Baseline (`ukmueller/SCPC`) | `scpc` v2.1.0 (Pure Mata) | Speedup | Numerical Precision |
-| :---: | :---: | :---: | :---: | :---: | :---: |
-| **$N = 200$** | Exact | 0.179 s | **0.094 s** | **1.90×** | Exact ($0.000$) |
-| **$N = 722$** | Exact | 0.580 s | **0.288 s** | **2.01×** | Exact ($0.000$) |
-| **$N = 1,500$** | Exact | 2.424 s | **1.146 s** | **2.12×** | Exact ($0.000$) |
-| **$N = 3,000$** | Exact | 11.718 s | **5.559 s** | **2.11×** | Exact ($0.000$) |
-| **$N = 5,000$** | Approx (Large-$N$) | 40.567 s | **21.161 s** | **1.92×** | Exact ($0.000$) |
-| **$N = 10,000$** | Approx (Large-$N$) | 42.871 s | **20.652 s** | **2.08×** | Exact ($0.000$) |
+Historical timing claims require rerunning `benchmarks/benchmark_scpc.do` on the corrected implementation; no speedup or exact-parity guarantee is made.
 
 See [**`docs/optimization_and_benchmarks.md`**](docs/optimization_and_benchmarks.md) for full algorithmic breakdowns and mathematical details.
 
@@ -71,7 +64,7 @@ scpc, exact
 // Force Large-N Nyström approximation
 scpc, approx
 
-// Legacy PRNG mode for exact backward replication of 2021 results
+// Legacy PRNG mode for the legacy deterministic random-number stream
 scpc, approx legacyprng
 ```
 
@@ -79,16 +72,16 @@ scpc, approx legacyprng
 
 ## What's New in Version 2.1.0
 
-1. **64-Point Gauss-Legendre Quadrature & Brent's Root Finder ($10^{-8}$):** Replaced coarse 20-point bisection with adaptive Dekker-Brent root-finding, eliminating step-like jitter in critical values.
+1. **Adaptive angular quadrature and conservative critical values:** removes the endpoint singularity and returns the upper root bracket.
 2. **Unconditional Critical Value Caching:** Precomputes and caches the theoretical lower bound $c_{\text{uncond}}$, eliminating redundant calculations across regressors.
 3. **Vectorized PRNG in Mata:** Vectorized Monte Carlo index draws in Large-$N$ Nyström approximation mode.
-4. **Zero Macro Serialization Overhead:** Streamlined data flow between Mata and Stata memory.
+4. **Direct OLS projection:** Orthogonalizes supported OLS weights in Mata while preserving conditional covariance calculations.
 5. **Configurable Thresholds:** Explicit `exact`, `approx`, and `threshold()` options give users full control over when the Large-$N$ approximation triggers.
 
 ---
 
 ## References
 
-- **Müller, Ulrich K., and Mark W. Watson.** 2021. "Spatial Correlation Robust Inference." *Econometrica* 89 (6): 2901–2927.
+- **Müller, Ulrich K., and Mark W. Watson.** 2022. "Spatial Correlation Robust Inference." *Econometrica* 90 (6): 2901–2935.
 - **Müller, Ulrich K., and Mark W. Watson.** 2023. "Spatial Correlation Robust Inference in Linear Regression and Panel Models." *Journal of Business & Economic Statistics* 41 (4): 1050–1064.
-- **Becker, Sascha O., P. David Boll, and Hans-Joachim Voth.** 2026. "Spatial Regressions and Spatial Unit Roots in Stata." *The Stata Journal* (forthcoming).
+- **Becker, Sascha O., P. David Boll, and Hans-Joachim Voth.** 2026. "Testing and Correcting for Spatial Unit Roots in Regression Analysis." *The Stata Journal* 26(2): 177–202.

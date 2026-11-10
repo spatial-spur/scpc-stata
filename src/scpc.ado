@@ -15,7 +15,7 @@ program define scpc, eclass sortpreserve
 			uncond ///
 			exact ///
 			approx ///
-			threshold(integer 10000) ///
+			threshold(integer 4500) ///
 			cgridfac(real 1.2) ///
 			legacyprng ///
 		]
@@ -315,17 +315,24 @@ real matrix getdistvec(real matrix s1, real matrix s2)
 real matrix getdistmat(real matrix s)
 {
 	external real scalar latlongflag
-	real matrix mat, sq_mat, P, dot, inside_chord
+	real matrix mat, sq_mat, P, dot, inside_chord, centered
 	real colvector sq, s_lat, s_lon
-	real scalar n, c_rad
+	real vector idx
+	real scalar n, c_rad, j
 
 	n = rows(s)
 	if (latlongflag == 0) {
 		// BLAS Level-3 Euclidean Distance Gram Matrix: D^2 = sq*1' + 1*sq' - 2*(s*s')
-		sq = rowsum(s:^2)
+		centered = s :- s[1, .]
+		sq = rowsum(centered:^2)
 		sq_mat = sq * J(1, n, 1)
-		mat = (sq_mat + sq_mat') - 2 * cross(s', s')
+		mat = (sq_mat + sq_mat') - 2 * cross(centered', centered')
 		_diag(mat, 0)
+		// Recompute close pairs directly when Gram subtraction can lose precision.
+		for (j = 1; j <= n; j++) {
+			idx = selectindex(mat[., j] :<= 1e-12 * (sq :+ sq[j]))
+			if (length(idx) > 0) mat[idx, j] = rowsum((s[idx, .] :- s[j, .]):^2)
+		}
 		mat = sqrt(mat :* (mat :> 0))
 	}
 	else {
@@ -340,6 +347,10 @@ real matrix getdistmat(real matrix s)
 		inside_chord = inside_chord :* (inside_chord :> 0)
 		inside_chord = inside_chord :* (inside_chord :<= 1) :+ (inside_chord :> 1)
 		mat = asin(sqrt(inside_chord)) / PI_CONST()
+		for (j = 1; j <= n; j++) {
+			idx = selectindex((inside_chord[., j] :< 1e-8) :| (inside_chord[., j] :> 1 - 1e-8))
+			if (length(idx) > 0) mat[idx, j] = getdistvec(s[idx, .], J(length(idx), 1, 1) * s[j, .])
+		}
 	}
 	return(mat)
 }
@@ -348,16 +359,23 @@ real matrix getdistmat(real matrix s)
 real matrix getcrossdistmat(real matrix s1, real matrix s2)
 {
 	external real scalar latlongflag
-	real matrix D2, sq1, sq2, P1, P2, dot, inside
-	real scalar n1, n2, c_rad
+	real matrix D2, sq1, sq2, P1, P2, dot, inside, centered1, centered2
+	real scalar n1, n2, c_rad, j
 	real colvector s1_lat, s1_lon, s2_lat, s2_lon
+	real vector idx
 
 	n1 = rows(s1)
 	n2 = rows(s2)
 	if (latlongflag == 0) {
-		sq1 = rowsum(s1:^2)
-		sq2 = rowsum(s2:^2)
-		D2 = (sq1 * J(1, n2, 1) + J(n1, 1, 1) * sq2') - 2 * (s1 * s2')
+		centered1 = s1 :- s1[1, .]
+		centered2 = s2 :- s1[1, .]
+		sq1 = rowsum(centered1:^2)
+		sq2 = rowsum(centered2:^2)
+		D2 = (sq1 * J(1, n2, 1) + J(n1, 1, 1) * sq2') - 2 * (centered1 * centered2')
+		for (j = 1; j <= n2; j++) {
+			idx = selectindex(D2[., j] :<= 1e-12 * (sq1 :+ sq2[j]))
+			if (length(idx) > 0) D2[idx, j] = rowsum((s1[idx, .] :- s2[j, .]):^2)
+		}
 		return(sqrt(D2 :* (D2 :> 0)))
 	}
 	else {
@@ -372,7 +390,12 @@ real matrix getcrossdistmat(real matrix s1, real matrix s2)
 		inside = (1 :- dot) :/ 2
 		inside = inside :* (inside :> 0)
 		inside = inside :* (inside :<= 1) :+ (inside :> 1)
-		return(asin(sqrt(inside)) / PI_CONST())
+		D2 = asin(sqrt(inside)) / PI_CONST()
+		for (j = 1; j <= n2; j++) {
+			idx = selectindex((inside[., j] :< 1e-8) :| (inside[., j] :> 1 - 1e-8))
+			if (length(idx) > 0) D2[idx, j] = getdistvec(s1[idx, .], J(length(idx), 1, 1) * s2[j, .])
+		}
+		return(D2)
 	}
 }
 
@@ -399,105 +422,80 @@ real matrix demeanmat(real matrix mat)
 // Direct Matrix-Sum Newton-Raphson Spatial Scale Solver (Eliminates lvech)
 real scalar getc0_from_mat(real matrix D, real scalar avc0)
 {
-	real scalar n, denom, dbar, c, f, fprime, step, iter, c_low, c_high
-	real matrix exp_cd
-
+	real scalar n, denom
+	real scalar dbar, floor_corr, lo, hi, c, f, slope, candidate, iter
+	real matrix E
 	n = rows(D)
 	denom = n * (n - 1)
 	dbar = sum(D) / denom
-	c = -log(avc0) / dbar
-	if (c <= 0) c = 1.0
-
-	c_low = 0
-	c_high = 1e8
-
-	for (iter = 1; iter <= 25; iter++) {
-		exp_cd = exp(-c * D)
-		f = (sum(exp_cd) - n) / denom - avc0
-		if (abs(f) < 1e-8 * avc0) break
-
-		if (f > 0) c_low = max((c_low, c))
-		else c_high = min((c_high, c))
-
-		fprime = -sum(D :* exp_cd) / denom
-		step = -f / fprime
-
-		if (c + step > c_low & c + step < c_high & abs(step) < 2 * c) {
-			c = c + step
-		}
-		else {
-			c = (c_high < 1e7 ? 0.5 * (c_low + c_high) : 2 * c)
-		}
+	floor_corr = (sum(D :== 0) - n) / denom
+	if (dbar <= 0 | dbar >= . | avc0 <= floor_corr | avc0 >= 1) {
+		errprintf("Average correlation is unattainable for these locations.\n")
+		_error(3498)
 	}
-	return(c)
+	lo = 0
+	hi = -log(avc0) / dbar
+	for (iter = 1; iter <= 1024; iter++) {
+		E = exp(-hi * D)
+		if ((sum(E) - n) / denom <= avc0) break
+		lo = hi
+		hi = 2 * hi
+		if (hi >= .) _error(3498)
+	}
+	c = hi
+	for (iter = 1; iter <= 100; iter++) {
+		E = exp(-c * D)
+		f = (sum(E) - n) / denom - avc0
+		if (abs(f) <= 1e-10 * avc0) return(c)
+		if (f > 0) lo = c
+		else hi = c
+		slope = -sum(D :* E) / denom
+		candidate = c - f / slope
+		if (candidate <= lo | candidate >= hi | candidate >= .) candidate = (lo + hi) / 2
+		c = candidate
+	}
+	errprintf("Spatial scale solver did not converge.\n")
+	_error(3498)
+	return(.)
 }
 
 // Safeguarded Vector Newton-Raphson Spatial Scale Solver for Large-N Nyström mode
 real scalar getc0_from_vec(real vector d, real scalar avc0)
 {
-	real scalar dbar, c, f, fprime, step, iter, c_low, c_high, n_d
-	real vector exp_cd, d_sub
-
-	n_d = length(d)
-	if (n_d > 200000) {
-		d_sub = d[1::100000]
-		dbar = mean(d_sub)
-		c = -log(avc0) / dbar
-		if (c <= 0) c = 1.0
-		c_low = 0
-		c_high = 1e8
-		for (iter = 1; iter <= 25; iter++) {
-			exp_cd = exp(-c * d_sub)
-			f = mean(exp_cd) - avc0
-			if (abs(f) < 1e-5 * avc0) break
-			if (f > 0) c_low = max((c_low, c))
-			else c_high = min((c_high, c))
-			fprime = -mean(d_sub :* exp_cd)
-			step = -f / fprime
-			if (c + step > c_low & c + step < c_high & abs(step) < 2 * c) {
-				c = c + step
-			}
-			else {
-				c = (c_high < 1e7 ? 0.5 * (c_low + c_high) : 2 * c)
-			}
-		}
-		// Full-vector polishing steps
-		for (iter = 1; iter <= 3; iter++) {
-			exp_cd = exp(-c * d)
-			f = mean(exp_cd) - avc0
-			if (abs(f) < 1e-8 * avc0) break
-			fprime = -mean(d :* exp_cd)
-			c = c - f / fprime
-		}
-		return(c)
-	}
-
+	real scalar denom
+	real scalar dbar, floor_corr, lo, hi, c, f, slope, candidate, iter
+	real matrix E
+	denom = length(d)
 	dbar = mean(d)
-	c = -log(avc0) / dbar
-	if (c <= 0) c = 1.0
-
-	c_low = 0
-	c_high = 1e8
-
-	for (iter = 1; iter <= 25; iter++) {
-		exp_cd = exp(-c * d)
-		f = mean(exp_cd) - avc0
-		if (abs(f) < 1e-8 * avc0) break
-
-		if (f > 0) c_low = max((c_low, c))
-		else c_high = min((c_high, c))
-
-		fprime = -mean(d :* exp_cd)
-		step = -f / fprime
-
-		if (c + step > c_low & c + step < c_high & abs(step) < 2 * c) {
-			c = c + step
-		}
-		else {
-			c = (c_high < 1e7 ? 0.5 * (c_low + c_high) : 2 * c)
-		}
+	floor_corr = mean(d :== 0)
+	if (dbar <= 0 | dbar >= . | avc0 <= floor_corr | avc0 >= 1) {
+		errprintf("Average correlation is unattainable for these locations.\n")
+		_error(3498)
 	}
-	return(c)
+	lo = 0
+	hi = -log(avc0) / dbar
+	for (iter = 1; iter <= 1024; iter++) {
+		E = exp(-hi * d)
+		if (mean(E) <= avc0) break
+		lo = hi
+		hi = 2 * hi
+		if (hi >= .) _error(3498)
+	}
+	c = hi
+	for (iter = 1; iter <= 100; iter++) {
+		E = exp(-c * d)
+		f = mean(E) - avc0
+		if (abs(f) <= 1e-10 * avc0) return(c)
+		if (f > 0) lo = c
+		else hi = c
+		slope = -mean(d :* E)
+		candidate = c - f / slope
+		if (candidate <= lo | candidate >= hi | candidate >= .) candidate = (lo + hi) / 2
+		c = candidate
+	}
+	errprintf("Spatial scale solver did not converge.\n")
+	_error(3498)
+	return(.)
 }
 
 real matrix getW(real matrix distmat, real scalar c0)
@@ -513,26 +511,46 @@ real matrix getW(real matrix distmat, real scalar c0)
 	return(W)
 }
 
-// Fully Vectorized 64-point Gauss-Legendre Quadrature (Zero loop overhead)
+// Angular substitution removes the endpoint singularity in the RP integral.
+real scalar scpc_rp_gauss(real vector evals, real scalar lo, real scalar hi)
+{
+    external real matrix GQxw
+    real colvector theta, cosine2, integral
+    real matrix ratios
+    theta = lo :+ (hi - lo) * GQxw[., 1]
+    cosine2 = cos(theta):^2
+    ratios = (1 :/ cosine2) * evals
+    integral = exp(-0.5 * rowsum(log(1 :+ ratios)))
+    return((hi - lo) * sum(GQxw[., 2] :* integral))
+}
+
+real scalar scpc_rp_integral(real vector evals, real scalar lo, real scalar hi,
+                            real scalar whole, real scalar tol, real scalar depth)
+{
+    real scalar mid, left, right
+    mid = (lo + hi) / 2
+    left = scpc_rp_gauss(evals, lo, mid)
+    right = scpc_rp_gauss(evals, mid, hi)
+    if (abs(left + right - whole) <= tol | depth >= 20) return(left + right)
+    return(scpc_rp_integral(evals, lo, mid, left, tol / 2, depth + 1) +
+           scpc_rp_integral(evals, mid, hi, right, tol / 2, depth + 1))
+}
+
 real scalar getrp(real matrix Om, real scalar cv)
 {
-	complex vector cevals
-	real vector evals
-	real matrix Omx, Ratio
-	external real matrix GQxw
-	real colvector u, w, one_minus_u2
-
-	Omx = -cv^2 * Om
-	Omx[1, .] = Om[1, .]
-	cevals = eigenvalues(Omx)
-	evals = Re(cevals)
-	evals = -select(evals, evals :< 0) / max(evals)
-
-	u = GQxw[., 1]
-	w = GQxw[., 2]
-	one_minus_u2 = 1.0 :- u:^2
-	Ratio = (1.0 :/ one_minus_u2) * evals
-	return(sum(w :/ sqrt(one_minus_u2 :* exp(rowsum(log(1.0 :+ Ratio))))) * (2.0 / PI_CONST()))
+    real rowvector vals, evals
+    real matrix Omx
+    real scalar positive, whole
+    Omx = -cv^2 * Om
+    Omx[1, .] = Om[1, .]
+    vals = Re(eigenvalues(Omx))
+    positive = max(vals)
+    if (positive <= 0 | positive >= .) return(0)
+    evals = -select(vals, vals :< 0) / positive
+    if (length(evals) == 0) return(1)
+    if (length(evals) == 1) return(2 / PI_CONST() * atan(1 / sqrt(evals[1])))
+    whole = scpc_rp_gauss(evals, 0, PI_CONST() / 2)
+    return(scpc_rp_integral(evals, 0, PI_CONST() / 2, whole, 1e-11, 0) * 2 / PI_CONST())
 }
 
 real scalar maxrp(struct mats vector Oms, real scalar q, real scalar cv)
@@ -545,116 +563,36 @@ real scalar maxrp(struct mats vector Oms, real scalar q, real scalar cv)
 	return(val)
 }
 
-// High-Performance Brent's Method Root Finder with Safeguarded Bisection
+// Solve only the active worst-case grid point, then verify the whole grid.
+// Returning the upper bracket keeps the computed grid size conservative.
 real scalar getcv(struct mats vector Oms, real scalar q, real scalar level)
 {
-	real scalar i, cv0, cv1, inv_sq, tol, prev_i, k
-	real scalar a, b, c, d, e, fa, fb, fc, s, p, q_brent, r_brent, m, iter
-	real vector qvec, rps
-	real matrix kmat
-
-	inv_sq = 1.0 / sqrt(q)
-	tol = 1e-7 * inv_sq // Tightened 7-digit tolerance
-	rps = J(length(Oms), 1, 0)
-	i = 1
-	cv0 = invttail(q, level * 0.5) * inv_sq
-
-	do {
-		cv1 = cv0
-		while (1) {
-			fb = getrp(Oms[i].mat[1::q+1, 1::q+1], cv1) - level
-			if (fb > 0) {
-				cv0 = cv1
-				cv1 = cv1 + inv_sq
-			}
-			else {
-				break
-			}
-		}
-
-		if (cv1 == cv0) {
-			b = cv1
-		}
-		else {
-			a = cv0
-			b = cv1
-			fa = getrp(Oms[i].mat[1::q+1, 1::q+1], a) - level
-			if (abs(fa) < abs(fb)) {
-				c = a; a = b; b = c
-				fc = fa; fa = fb; fb = fc
-			}
-			c = a
-			fc = fa
-			d = b - a
-			e = d
-
-			for (iter = 1; iter <= 40; iter++) {
-				if (abs(fc) < abs(fb)) {
-					a = b; b = c; c = a
-					fa = fb; fb = fc; fc = fa
-				}
-				m = 0.5 * (c - b)
-				if (abs(m) <= tol | fb == 0) break
-
-				if (abs(e) >= tol & abs(fa) > abs(fb)) {
-					if (a == c) {
-						s = fb / fa
-						p = 2.0 * m * s
-						q_brent = 1.0 - s
-					}
-					else {
-						q_brent = fa / fc
-						r_brent = fb / fc
-						s = fb / fa
-						p = s * (2.0 * m * q_brent * (q_brent - r_brent) - (b - a) * (r_brent - 1.0))
-						q_brent = (q_brent - 1.0) * (r_brent - 1.0) * (s - 1.0)
-					}
-					if (p > 0) q_brent = -q_brent
-					p = abs(p)
-					if (2.0 * p < min((3.0 * m * q_brent - abs(tol * q_brent), abs(e * q_brent)))) {
-						e = d
-						d = p / q_brent
-					}
-					else {
-						d = m
-						e = m
-					}
-				}
-				else {
-					d = m
-					e = m
-				}
-
-				a = b
-				fa = fb
-				if (abs(d) > tol) b = b + d
-				else b = b + (m > 0 ? tol : -tol)
-
-				fb = getrp(Oms[i].mat[1::q+1, 1::q+1], b) - level
-
-				if ((fb > 0 & fc > 0) | (fb < 0 & fc < 0)) {
-					c = a
-					fc = fa
-					d = b - a
-					e = d
-				}
-			}
-		}
-
-		cv1 = b
-		for (k = 1; k <= length(Oms); k++) {
-			rps[k] = getrp(Oms[k].mat[1::q+1, 1::q+1], cv1)
-		}
-		maxindex(rps, 1, qvec, kmat)
-		prev_i = i
-		i = qvec[1]
-		if (prev_i == i | rps[i] <= level) {
-			break
-		}
-		cv0 = cv1
-	} while (rps[i] > level)
-
-	return(cv1 * sqrt(q))
+    real scalar lo, hi, mid, inv_sq, iter, i, j
+    real colvector rps, index
+    real matrix ties
+    inv_sq = 1 / sqrt(q)
+    lo = invttail(q, level / 2) * inv_sq
+    i = 1
+    rps = J(length(Oms), 1, 0)
+    while (1) {
+        hi = lo
+        while (getrp(Oms[i].mat[1::q+1, 1::q+1], hi) > level) {
+            lo = hi
+            hi = hi + inv_sq
+        }
+        for (iter = 1; iter <= 100; iter++) {
+            if (hi - lo <= 1e-9 * inv_sq) break
+            mid = (lo + hi) / 2
+            if (getrp(Oms[i].mat[1::q+1, 1::q+1], mid) > level) lo = mid
+            else hi = mid
+        }
+        for (j = 1; j <= length(Oms); j++) rps[j] = getrp(Oms[j].mat[1::q+1, 1::q+1], hi)
+        maxindex(rps, 1, index, ties)
+        if (rps[index[1]] <= level) break
+        i = index[1]
+        lo = hi
+    }
+    return(hi * sqrt(q))
 }
 
 void setfinalW(struct mats vector Oms, real matrix W, real scalar cv)
@@ -729,24 +667,18 @@ real scalar nextU()
 	}
 }
 
+// Partial Fisher-Yates is O(m) and preserves every location exactly once.
 void jumble_s(real matrix s, real scalar m)
 {
-	external real scalar legacyprng_flag
-	real scalar i, j, n
-	real vector sj, p
-	n = rows(s)
-	if (legacyprng_flag) {
-		for (i = 1; i <= m; i++) {
-			j = floor(nextU() * n) + 1
-			sj = s[i, .]
-			s[i, .] = s[j, .]
-			s[j, .] = sj
-		}
-	}
-	else {
-		p = order(runiform(n, 1), 1)
-		s[1::m, .] = s[p[1::m], .]
-	}
+    real scalar i, j, n
+    real rowvector temporary
+    n = rows(s)
+    for (i = 1; i <= m; i++) {
+        j = i + floor(nextU() * (n - i + 1))
+        temporary = s[i, .]
+        s[i, .] = s[j, .]
+        s[j, .] = temporary
+    }
 }
 
 real vector raninds(real scalar n, real scalar capM)
@@ -777,12 +709,21 @@ void normalize_s(real matrix s)
 {
 	external real scalar latlongflag
 	external real vector permfin
-	real scalar n
+	real scalar n, scale
+	real matrix evecs
+	real rowvector evals
 	n = rows(s)
 	if (latlongflag == 0) {
 		s = s :- mean(s)
-		permfin = order(rowsum(s:^2), 1)
+		symeigensystem(cross(s, s), evecs, evals)
+		s = s * evecs
+		if (max(s[., 1]) != max(abs(s[., 1]))) s = -s
+		permfin = order(s, (1::cols(s))')
 		s = s[permfin, .]
+		s = s :- colmin(s)
+		scale = max(s)
+		if (scale <= 0 | scale >= .) _error(3498)
+		s = s / scale
 	}
 	else {
 		s[., 2] = s[., 2] :- mean(s[., 2])
@@ -814,7 +755,7 @@ void LNsetWc0(real matrix s, real scalar avc0, real matrix W, real scalar c0, re
 		distvec[(i - 1) * m * (m - 1) / 2 + 1::i * m * (m - 1) / 2] = lvech(ms[i].mat)
 	}
 	c0 = getc0_from_vec(distvec, avc0)
-	cmax = getc0_from_vec(distvec, minavc)
+	cmax = getc0_from_vec(distvec, mean(distvec :== 0) + (1 - mean(distvec :== 0)) * minavc)
 
 	Wall = J(n, capN * qmax, 0)
 	for (i = 1; i <= capN; i++) {
@@ -854,7 +795,7 @@ struct mats vector LNgetOms(real matrix s, real scalar c0, real scalar cmax, rea
 
 	W1 = W[inds[1::capM], .]
 	W2 = W[inds[2::capM+1], .]
-	I_W = I(cols(W))
+	I_W = cross(W, W)
 
 	c = c0
 	for (i = 1; i <= nc; i++) {
@@ -870,13 +811,13 @@ struct mats vector LNgetOms(real matrix s, real scalar c0, real scalar cmax, rea
 void set_spatial_scpc(real scalar avc0, string scalar sel, string scalar latlong, string scalar method, real scalar threshold, real scalar cgridfac_arg, real scalar legacyprng_arg)
 {
 	external real scalar qmax, capM, m, cgridfac, capN, minavc, latlongflag, legacyprng_flag, random_t, c0, cmax
-	external struct mats vector Omsfin, Sig_grid
+	external struct mats vector Omsfin
 	external real matrix Wfin, distmat, s
 	external real vector permfin
 	external real rowvector cvs_uncond
-	external real scalar cvfin, condflag
-	real scalar cv, n, nc, c, i_grid, is_exact
-	string scalar slist
+	external real scalar cvfin, condflag, spatial_exact
+	real scalar cv, n, floor_corr
+	string matrix slist
 	real colvector slist_nums, slist_order
 	real scalar slist_len, i
 	struct mats vector Oms
@@ -885,7 +826,6 @@ void set_spatial_scpc(real scalar avc0, string scalar sel, string scalar latlong
 	legacyprng_flag = legacyprng_arg
 	random_t = 1.0
 	cvs_uncond = J(1, 0, 0) // Reset unconditional CV cache
-	Sig_grid = mats(0)
 
 	// slist variable ordering validation
 	stata("unab slist: s_*")
@@ -939,39 +879,28 @@ void set_spatial_scpc(real scalar avc0, string scalar sel, string scalar latlong
 	else qmax = 120
 
 	real matrix W
+	spatial_exact = (method == "exact") | (method == "auto" & n < threshold)
+	permfin = (1::n)
+	if (spatial_exact) {
+		distmat = getdistmat(s)
+		c0 = getc0_from_mat(distmat, avc0)
+		floor_corr = (sum(distmat :== 0) - n) / (n * (n - 1))
+		cmax = getc0_from_mat(distmat, floor_corr + (1 - floor_corr) * minavc)
+	}
+	else {
+		capN = 20
+		capM = 1000000
+		m = min((1000, n))
+		normalize_s(s)
+	}
 
 	while (1) {
 		qmax = min((n - 1, qmax))
-		is_exact = (method == "exact") | (method == "auto" & n < threshold)
-
-		if (is_exact) {
-			// Pure Mata Exact Computation Mode
-			permfin = (1::n)
-			distmat = getdistmat(s)
-			c0 = getc0_from_mat(distmat, avc0)
-			cmax = getc0_from_mat(distmat, minavc)
+		if (spatial_exact) {
 			W = getW(distmat, c0)
-
-			// Precompute and cache Sig_grid once
-			nc = getnc(c0, cmax)
-			Sig_grid = mats(nc)
-			c = c0
-			for (i_grid = 1; i_grid <= nc; i_grid++) {
-				Sig_grid[i_grid].mat = exp(-c * distmat)
-				c = c * cgridfac
-			}
-
-			Oms = mats(nc)
-			for (i_grid = 1; i_grid <= nc; i_grid++) {
-				Oms[i_grid].mat = cross(W, Sig_grid[i_grid].mat) * W
-			}
+			Oms = getOms(distmat, c0, cmax, W)
 		}
 		else {
-			// Large-N Nyström approximation mode
-			capN = 20
-			capM = 1000000
-			m = min((1000, n))
-			normalize_s(s)
 			LNsetWc0(s, avc0, W, c0, cmax)
 			Oms = LNgetOms(s, c0, cmax, W)
 		}
@@ -1014,29 +943,11 @@ void set_scpcstats(string scalar w, string scalar sel)
 
 void set_ccspc()
 {
-	external struct mats vector Omsxfin, Sig_grid
-	external real matrix s, Wx
-	external real scalar c0, cmax, cvxfin
-	real scalar i, use_cached
-
-	use_cached = 0
-	if (length(Sig_grid) > 0) {
-		if (rows(Wx) == rows(Sig_grid[1].mat)) {
-			use_cached = 1
-		}
-	}
-
-	if (use_cached) {
-		// Fast evaluation using cached Sig_grid
-		Omsxfin = mats(length(Sig_grid))
-		for (i = 1; i <= length(Sig_grid); i++) {
-			Omsxfin[i].mat = cross(Wx, Sig_grid[i].mat) * Wx
-		}
-	}
-	else {
-		// Large-N evaluation
-		Omsxfin = LNgetOms(s, c0, cmax, Wx)
-	}
+	external struct mats vector Omsxfin
+	external real matrix s, Wx, distmat
+	external real scalar c0, cmax, cvxfin, spatial_exact
+	if (spatial_exact) Omsxfin = getOms(distmat, c0, cmax, Wx)
+	else Omsxfin = LNgetOms(s, c0, cmax, Wx)
 	cvxfin = getcv(Omsxfin, cols(Wx) - 1, 0.05)
 }
 

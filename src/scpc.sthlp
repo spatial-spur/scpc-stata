@@ -33,9 +33,9 @@
 {syntab:Performance & Numerical Options (v2.1 Pure Mata)}
 {synopt :{opt exact}}force exact spatial spectral decomposition; eliminates all Monte Carlo sampling variance{p_end}
 {synopt :{opt approx}}force Large-N Nyström approximation{p_end}
-{synopt :{opt threshold(#)}}sample size threshold below which exact computation is automatically chosen; default is {cmd:threshold(10000)} (upstream default was 4,500){p_end}
+{synopt :{opt threshold(#)}}sample size threshold below which exact computation is automatically chosen; default is {cmd:threshold(4500)}{p_end}
 {synopt :{opt cgridfac(#)}}grid expansion multiplier for spatial scale grid {it:c}; default is {cmd:cgridfac(1.2)}{p_end}
-{synopt :{opt legacyprng}}use legacy 32-bit linear congruential generator and 40-point Gauss-Legendre quadrature for exact historical reproduction of 2021 results{p_end}
+{synopt :{opt legacyprng}}use legacy 32-bit linear congruential generator and 40-point Gauss-Legendre quadrature for a legacy deterministic stream{p_end}
 {synoptline}
 {p2colreset}{...}
 
@@ -44,41 +44,22 @@
 
 {pstd}
 {cmd:scpc} conducts spatial correlation robust inference following the Spatial Correlation Principal Components (SCPC) method
-of Müller and Watson (2021). Location coordinates must be stored in variables prefixed with {cmd:s_} ({cmd:s_1}, {cmd:s_2}, ...).
+of Müller and Watson (2022, 2023). Location coordinates must be stored in variables prefixed with {cmd:s_} ({cmd:s_1}, {cmd:s_2}, ...).
 Observations belonging to the same cluster (if {cmd:vce(cluster ...)} was specified) must have identical coordinates.
 
 {pstd}
-Version 2.1 is implemented in {bf:100% pure Mata} with zero external binary or compiled plugin dependencies, ensuring full cross-platform portability and full compatibility with standard SSC distribution.
+Version 2.1 is implemented in {bf:100% pure Mata} with zero external binary or compiled plugin dependencies, so no separate plugin binary is required; platform-specific execution still needs testing.
 
 {marker optimizations}{...}
 {title:Performance & Mathematical Optimizations}
 
 {pstd}
-Version 2.1 introduces six major architectural and numerical enhancements over the 2021 baseline:
-
-{p 4 8 2}
-1. {bf:BLAS Level-3 Distance Computation}:
-{cmd:getdistmat} vectorizes both Euclidean and spherical geodesic distances using Level-3 matrix multiplication ({cmd:cross(s', s')} and 3D unit chord dot products), achieving a 12x speedup over interpreted element loops.
-
-{p 4 8 2}
-2. {bf:Direct Matrix-Sum Newton-Raphson Spatial Scale Solver}:
-Replaces 35-step bisection on millions of distance pairs with a safeguarded Newton-Raphson solver starting from the sharp analytical Jensen bound {it:c = -ln(avc0) / d_bar}. Evaluates average correlation directly on the distance matrix via the identity {it:avc = (sum(exp(-c*D)) - N) / (N*(N-1))}, converging in 4-6 iterations and completely eliminating the memory overhead of lower-triangular vector extraction ({cmd:lvech}).
-
-{p 4 8 2}
-3. {bf:Vectorized Gauss-Legendre Quadrature}:
-{cmd:getrp} computes 64-point quadrature simultaneously via outer-product matrix expressions, eliminating the 64-iteration interpreted Mata loop for a 3.14x speedup per evaluation.
-
-{p 4 8 2}
-4. {bf:Brent's Method Critical Value Root Finding}:
-{cmd:getcv} uses Brent's root-finding method (combining inverse quadratic interpolation, secant steps, and bisection) to converge in 4 to 6 function evaluations rather than 24 bisection steps, cutting hundreds of eigenvalue calls across regressors.
-
-{p 4 8 2}
-5. {bf:Cross-Regressor Caching}:
-Unconditional critical values for {it:W_fin} and spatial covariance matrices across the scale grid ({it:Sig_grid}) are computed once and cached, eliminating redundant multi-second loops across covariates.
-
-{p 4 8 2}
-6. {bf:Numerical Integrity & 64-bit PRNG}:
-Full 64-bit IEEE 754 constants, 64-point quadrature, tightened {it:1e-8} relative tolerance, analytic OLS projection in Mata, and native 64-bit PRNG honoring {cmd:set seed}.
+Numerical calibration uses adaptive angular quadrature, an upper critical-value bracket,
+and a safeguarded spatial-scale solver. Exact mode retains one covariance matrix at a time;
+it does not cache the full grid. Approximate mode samples without replacement and retains
+{it:W'W} for nonorthonormal conditional weights. Numerical tolerances do not account for
+finite-grid or Monte Carlo approximation error. Historical benchmark claims and exact
+upstream parity are not correctness guarantees.
 
 {marker options}{...}
 {title:Options}
@@ -102,10 +83,10 @@ Full 64-bit IEEE 754 constants, 64-point quadrature, tightened {it:1e-8} relativ
 {opt approx} forces the Large-{it:N} Nyström approximation regardless of sample size {it:N}.
 
 {phang}
-{opt threshold(#)} sets the sample size {it:N} cutoff between exact and approximate computation. Default is 10,000.
+{opt threshold(#)} sets the sample size {it:N} cutoff between exact and approximate computation. Default is 4,500.
 
 {phang}
-{opt legacyprng} activates the legacy 32-bit linear congruential generator (LCG) and 40-point Gauss-Legendre quadrature for exact historical numerical replication of results from the original 2021 release.
+{opt legacyprng} activates the legacy 32-bit linear congruential generator (LCG) and 40-point Gauss-Legendre quadrature for a legacy deterministic stream; corrected calculations need not reproduce historical output.
 
 {marker results}{...}
 {title:Stored results}
@@ -123,6 +104,6 @@ Full 64-bit IEEE 754 constants, 64-point quadrature, tightened {it:1e-8} relativ
 {title:References}
 
 {phang}
-Müller, Ulrich K., and Mark W. Watson. 2021. "Spatial Correlation Robust Inference."
-{it:Econometrica} 89 (6): 2901–2927.
+Müller, Ulrich K., and Mark W. Watson. 2022. "Spatial Correlation Robust Inference."
+{it:Econometrica} 90 (6): 2901–2935.
 {p_end}
