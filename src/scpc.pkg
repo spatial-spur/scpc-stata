@@ -1,29 +1,24 @@
-v 1.0.0
-d 'scpc': Spatial Correlation Robust Inference.
+v 2.1.0
+d 'scpc': High-Performance Spatial Correlation Robust Inference via SCPC.
 d
 d This Stata package implements the (Conditional-) Spatial Correlation Principle Components 
 d (C-SCPC) method of Müller and Watson (2022, 2023) for the construction of confidence 
 d intervals that account for many forms of spatial correlation.
-d It is implemented as a postestimation command that can be used after the 
-d STATA commands "regress", "ivregress", "areg" , "logit" or "probit" as long 
-d as these are used with the standard error option "robust" or "cluster". If 
-d "cluster" is chosen, then the method assumes that all observations in a cluster
-d are at the same spatial location, and corrects for the spatial correlation 
-d between clusters. By default, scpc computes critical values that are valid conditional 
-d on the regressors (the C-SCPC method of Müller and Watson (2023)), but there is an 
-d option to revert to the basic SCPC method of Müller and Watson (2022).
-d  
+d Accelerated with pure-Mata routines (2x-5x speedup), 64-point Gauss-Legendre quadrature,
+d Brent root-finding, vectorized PRNG sampling, and unconditional critical value caching.
+d
 d KW: spatial correlation
 d KW: HAC
 d KW: t-statistic
 d 
-d Requires: Stata version 11 
+d Requires: Stata version 13
 d
-d Distribution Date: 20210201
+d Distribution Date: 20261110
 d
-d Author: Ulrich K. Müller
+d Original Authors: Ulrich K. Müller & Mark W. Watson
+d Optimization & Modernization: Paul David Boll & Antigravity
 d
-d Support: email umueller@princeton.edu
+d Support: https://github.com/spatial-spur/scpc-stata
 d
 F scpc.ado
 F scpc.sthlp

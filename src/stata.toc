@@ -1,9 +1,7 @@
-v 1.0.0
-d Ulrich K. Müller
-d Princeton University
-d umueller@princeton.edu
-d https://github.com/ukmueller/SCPC
+v 2.1.0
+d spatial-spur
+d https://github.com/spatial-spur/scpc-stata
 
-d 'scpc': Spatial Correlation Robust Inference.
+d 'scpc': High-Performance Spatial Correlation Robust Inference.
 
 p scpc
