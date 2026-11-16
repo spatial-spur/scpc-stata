@@ -447,13 +447,17 @@ void setOmsWfin(real scalar avc0, string scalar sel, string scalar latlong)
 	external real vector permfin
 	external real scalar cvfin
 	external real scalar condflag
+	string scalar slist_raw
+	string vector slist
+	real vector slist_nums, slist_order
+	real scalar slist_len, i
 	
 	// BUG FIX WITH COORDINATE VARIABLE ORDERING, thank you David Boll!
 	
 	stata("unab slist: s_*")  // create local macro slist containing a list of all s_* variables
 
-	slist = st_local("slist") // import to mata
-	slist = tokens(slist)' // tokenize list into vector
+	slist_raw = st_local("slist") // import to mata
+	slist = tokens(slist_raw)' // tokenize list into vector
 	slist_nums = strtoreal(substr(slist,3,.)) // extract numbers for sorting
 	slist_order = order(slist_nums,1) // extract numerical order (alphabetical order would be incorrect for d>9)
 	slist = slist[slist_order] // re-order elements of slist
