@@ -27,10 +27,10 @@ real matrix getdistmat(real matrix s)
 	}
 	else
 		{
-		c=3.14159265359/180
+		c=pi()/180
 		for(i=1;i<=n;i++){
 			d=(.5*c)*(s:-s[i,.])
-			mat[.,i]=asin(sqrt(sin(d[.,1]):^2  + cos(c*s[i,1])*(cos(c*s[.,1]):*(sin(d[.,2]):^2))))/3.14159265359
+			mat[.,i]=asin(sqrt(sin(d[.,1]):^2  + cos(c*s[i,1])*(cos(c*s[.,1]):*(sin(d[.,2]):^2))))/pi()
 		}
 	}	
 	return(mat)
@@ -127,7 +127,7 @@ real scalar getrp(real matrix Om, real scalar cv)
 		u=GQxw[i,1]
 		val=val+GQxw[i,2]/sqrt((1-u^2)*exp(sum(log(1:+evals/(1-u^2)))))
 	}
-	return(val*2.0/3.14159265359)
+	return(val*2.0/pi())
 }
 
 real scalar maxrp(struct mats vector Oms, real scalar q, real scalar cv)
@@ -262,9 +262,9 @@ real matrix getdistvec(real matrix s1, real matrix s2)
 	}
 	else
 		{
-		c=3.14159265359/180
+		c=pi()/180
 		d=(.5*c)*(s1-s2)
-		dist=asin(sqrt(sin(d[.,1]):^2  + cos(c*s1[.,1]):*(cos(c*s2[.,1]):*(sin(d[.,2]):^2))))/3.14159265359
+		dist=asin(sqrt(sin(d[.,1]):^2  + cos(c*s1[.,1]):*(cos(c*s2[.,1]):*(sin(d[.,2]):^2))))/pi()
 	}	
 	return(dist)
 }	
@@ -618,24 +618,24 @@ void set_Wx_cluster(string scalar Vname, string scalar sel)
 	for(i=1;i<=cols(Wfin);i++){
 		r[permfin]=Wfin[.,i]	
 		stata("cap drop scpc_r")
-		stata("qui gen scpc_r=.")
+		stata("qui gen double scpc_r=.")
 		stata("qui replace scpc_r=0 if e(sample)")
 		st_store(.,"scpc_r",sel,r)
 		stata("cap drop scpc_rx")
-		stata("qui by \`e(clustvar)': egen scpc_rx=total(scpc_r) if e(sample)")	// BACKSLASH TO PREVENT EVALUATION WHEN FUNCTION IS FIRST READ
+		stata("qui by \`e(clustvar)': egen double scpc_rx=total(scpc_r) if e(sample)")	// BACKSLASH TO PREVENT EVALUATION WHEN FUNCTION IS FIRST READ
 		stata("cap drop scpc_r")
 		if(i==1){
-			stata("qui gen scpc_r=scpc_rx*scpc_xs if e(sample)")
+			stata("qui gen double scpc_r=scpc_rx*scpc_xs if e(sample)")
 		}
 		else{
 			stata("qui replace scpc_rx=scpc_rx*scpc_xs")
 			stata("_estimates hold oreg, restore")		
 			stata(Vname)
-			stata("qui predict scpc_r, resid")	
+			stata("qui predict double scpc_r, resid")	
 			stata("_estimates unhold oreg")
 		}
 		stata("cap drop scpc_rx")
-		stata("qui by \`e(clustvar)': egen scpc_rx=total(scpc_r*scpc_x) if e(sample)")  // BACKSLASH TO PREVENT EVALUATION WHEN FUNCTION IS FIRST READ
+		stata("qui by \`e(clustvar)': egen double scpc_rx=total(scpc_r*scpc_x) if e(sample)")  // BACKSLASH TO PREVENT EVALUATION WHEN FUNCTION IS FIRST READ
 		
 		Wx[.,i]=st_data(.,"scpc_rx",sel)[permfin]
 	}
@@ -657,18 +657,18 @@ void set_Wx_nocluster(string scalar Vname, string scalar sel)
 	for(i=1;i<=cols(Wfin);i++){
 		r[permfin]=Wfin[.,i]	
 		stata("cap drop scpc_r")
-		stata("qui gen scpc_r=.")
+		stata("qui gen double scpc_r=.")
 		st_store(.,"scpc_r",sel,r)
 		stata("cap drop scpc_rx")
 		if(i==1){
-			stata("qui gen scpc_rx=scpc_r*scpc_xs*scpc_x if e(sample)")
+			stata("qui gen double scpc_rx=scpc_r*scpc_xs*scpc_x if e(sample)")
 		}
 		else{
-			stata("qui gen scpc_rx=scpc_r*scpc_xs if e(sample)")
+			stata("qui gen double scpc_rx=scpc_r*scpc_xs if e(sample)")
 			stata("_estimates hold oreg, restore")
 			stata(Vname)
 			stata("cap drop scpc_r")
-			stata("qui predict scpc_r, resid")	
+			stata("qui predict double scpc_r, resid")	
 			stata("_estimates unhold oreg")
 			stata("qui replace scpc_rx=scpc_r*scpc_x if e(sample)")
 		}		
@@ -701,6 +701,15 @@ void set_scpccvs()
 	st_matrix("scpc_cvs_c", cvs)	
 }
 
+void get_scpc_meta(string scalar c0name, string scalar cvname, string scalar qname)
+{
+	external real scalar c0, cvfin
+	external real matrix Wfin
+	st_numscalar(c0name, c0)
+	st_numscalar(cvname, cvfin)
+	st_numscalar(qname, cols(Wfin) - 1)
+}
+
 end
 
 capture program drop scpc_setscores
@@ -711,32 +720,32 @@ program scpc_setscores, sortpreserve
 	local slist ""
 	quietly{
 	if(e(cmd)=="regress" | e(cmd)=="logit" | e(cmd)=="probit"){
-		predict `e' if e(sample),sc
+		predict double `e' if e(sample),sc
 		local na : colnames e(V)
 		tokenize `na'
 		local i = 1
 		while "``i''" != "" {
 			capture drop scpc_score`i'
-			if("``i''"=="_cons") gen scpc_score`i'=`e' if e(sample)
-			else gen scpc_score`i'=`e'*``i'' if e(sample)
+			if("``i''"=="_cons") gen double scpc_score`i'=`e' if e(sample)
+			else gen double scpc_score`i'=`e'*``i'' if e(sample)
 			local slist "`slist' scpc_score`i'"
 			local ++i
 		}
 	}
 	else if(e(cmd)=="areg"){
-		predict `e' if e(sample),sc
+		predict double `e' if e(sample),sc
 		sort `e(absvar)'
 		local na : colnames e(V)
 		tokenize `na'
 		local i = 1
 		while "``i''" != "" {
 			capture drop scpc_score`i'
-			if("``i''"=="_cons") gen scpc_score`i'=`e' if e(sample)
+			if("``i''"=="_cons") gen double scpc_score`i'=`e' if e(sample)
 			else{
 				tempvar x
-				by `e(absvar)': egen `x'=mean(``i'') if e(sample)
+				by `e(absvar)': egen double `x'=mean(``i'') if e(sample)
 				sum  ``i'' if e(sample)			
-				gen scpc_score`i'=`e'*(``i''-`x'+`r(mean)') if e(sample)
+				gen double scpc_score`i'=`e'*(``i''-`x'+`r(mean)') if e(sample)
 			}
 			local slist "`slist' scpc_score`i'"
 			local ++i
@@ -744,19 +753,19 @@ program scpc_setscores, sortpreserve
 	}
 	else if(e(cmd)=="ivregress"){
 		tempvar stata_scr
-		predict `stata_scr'*,sc
+		predict double `stata_scr'*,sc
 		
 		local j=`: word count `e(instd)''+1
-		gen `e'=`stata_scr'`j'
+		gen double `e'=`stata_scr'`j'
 		local na : colnames e(V)
 		tokenize `na'
 		local i = 1
 		while "``i''" != "" {
 			capture drop scpc_score`i'
-			if (`i'<`j') gen scpc_score`i'=`stata_scr'`i' if e(sample)
+			if (`i'<`j') gen double scpc_score`i'=`stata_scr'`i' if e(sample)
 			else{
-				if("``i''"=="_cons") gen scpc_score`i'=`e' if e(sample)
-				else gen scpc_score`i'=`e'*``i'' if e(sample)
+				if("``i''"=="_cons") gen double scpc_score`i'=`e' if e(sample)
+				else gen double scpc_score`i'=`e'*``i'' if e(sample)
 			}
 			local slist "`slist' scpc_score`i'"
 			local ++i
@@ -775,7 +784,7 @@ program scpc_setscores, sortpreserve
 		local i = 1
 		while "``i''" != ""{
 			capture drop `TotScore'
-			by `e(clustvar)': egen `TotScore'=total(scpc_score`i') if e(sample)
+			by `e(clustvar)': egen double `TotScore'=total(scpc_score`i') if e(sample)
 			replace scpc_score`i'=`TotScore'
 			by `e(clustvar)': replace `scpc_sel' = 1 if _n==1 & e(sample)
 			local ++i
@@ -794,11 +803,33 @@ program scpc, eclass sortpreserve
 			avc(real -1) ///
 			latlong		///
 			uncond   ///
+			backend(string) ///
+			nthreads(integer -1) ///
 		]
 		//	syntax [if] [in], [
 //		avc(real 1.0)
 //		]
 	
+	local req_backend = lower(trim(`"`backend'"'))
+	if "`req_backend'" == "" {
+		local req_backend = lower(trim(`"$SPATIAL_BACKEND"'))
+	}
+	if "`req_backend'" == "" {
+		local req_backend "auto"
+	}
+	if "`req_backend'" != "auto" & "`req_backend'" != "rust" & "`req_backend'" != "fallback" {
+		di as error "invalid backend() option: `req_backend' (expected auto, rust, or fallback)"
+		exit 198
+	}
+	if `nthreads' != -1 & `nthreads' < 1 {
+		di as error "nthreads() must be a positive integer (or -1 for default)"
+		exit 198
+	}
+	if `k' < 1 {
+		di as error "k() must be at least 1"
+		exit 198
+	}
+
 	matrix scpc_Bread=e(V_modelbased)
 	if( scpc_Bread[1,1]==.) {
 		disp as text "e(V_modelbased) missing; aborting"
@@ -811,118 +842,344 @@ program scpc, eclass sortpreserve
 		disp as text "average correlation must be between 0.001 and 0.99; aborting"
 		exit(999)
 	}
-	
-	// ENSURE COORDINATES ARE UNIQUE WITHIN CLUSTERS
-	if( "`e(clustvar)'"!="") {
-		unab tmp_svarlist: s_*
-		qui foreach tmp_svar of varlist `tmp_svarlist'{
-			tempvar unique_coords_tag
-			tempvar unique_coords_num
-			egen `unique_coords_tag' = tag(`e(clustvar)' `tmp_svar')
-			egen `unique_coords_num' = total(`unique_coords_tag'), by(`e(clustvar)')
-			sum `unique_coords_num'
-			if (`r(min)'!=1 | `r(max)'!=1){
-				noi disp as text "coordinates not constant within clusters; aborting"
-				exit(999)
-			}
-		}
-	}
-	// -----------------------------------------
-	
-	if( "`e(clustvar)'"!="") {
-		tempvar es
-		gen `es'=0 if e(sample)
-		sort `e(clustvar)' `es'
-	}
-	tempvar scpc_sel
-	scpc_setscores, scpc_sel(`scpc_sel')
-	mata setOmsWfin(`avc',"`scpc_sel'","`latlong'")
-	
-	qui sum `scpc_sel', detail
-	tempname neff 
-	matrix `neff'=r(sum)
-	matrix b=e(b)	
-	matrix scpc_Bread0=e(V_modelbased)
-	local clist 
-	local na : colnames b
-	if(e(cmd)=="regress"){
-		tokenize `na'
-		forval j = 1/`= colsof(b)' {
-			if "``j''" != "_cons"  {
-			local clist `clist' ``j''
-			}
-		}
-		local clist="qui reg scpc_rx `clist'"
-	}	
-	else if(e(cmd)=="ivregress"){
-		local elist `e(insts)'
-		local i=`: word count `e(instd)''+1
-		
-		tempvar ess
-		qui gen `ess'=0
-		qui replace `ess'=1 if e(sample)
-		_estimates hold oreg, restore
-		cap drop scpc_fs_*
-		local clist 
-		tokenize `na'
-		forval j = 1/`= colsof(b)' {
-			if(`j'<`i'){			
-				qui reg ``j'' `elist' if `ess'
-				qui predict scpc_fs_`j', xb
-				qui replace scpc_fs_`j'=. if !`ess'
-				local clist `clist' scpc_fs_`j'
-			}
-			else{
-				local clist `clist' ``j''
-			}
-		}
-		matrix colnames scpc_Bread0 = `clist'
-		_estimates unhold oreg		
-		local clist="qui ivregress 2sls scpc_rx `e(exogr)' (`e(instd)' = `e(insts)' )"	
-	}
-	else if("`uncond'"==""){
-		disp as text "conditional critical values only supported for ivregress 2sls and regress, use option uncond for only unconditionally valid critical values; aborting"
-		exit(999)
-	}
-	
-	local k=min(colsof(b),`k')
-	matrix b=b[1..., 1..`k']
-	local na : colnames b
-	matrix scpctab =b'*(1,1,1,1,1,1)
-	matrix scpc_cvs =b'*(1,1,1,1)
 
-	tokenize `na'
-	
-	// Loop through covariates
-	local i = 1	
-	while "``i''" != "" {
-		tempvar w
-		matrix coef = `neff'*scpc_Bread[`i', 1...]
-		qui matrix score `w' = coef if `scpc_sel' == 1		
-		qui replace `w' = `w' + b[1,`i'] if `scpc_sel' == 1
-		if("`uncond'"==""){	
-			capture drop scpc_x 
-			capture drop scpc_xs			
-			matrix coef = `neff'*scpc_Bread0[`i', 1...]	
-			qui matrix score scpc_x = coef if e(sample)						
-			if( "`e(clustvar)'"=="") {
-				qui gen scpc_xs=sign(scpc_x) if e(sample)				
-				mata set_Wx_nocluster("`clist'", "`scpc_sel'")
-			}
-		else{
-			qui by `e(clustvar)': egen scpc_xs=total(scpc_x*scpc_x) if e(sample)
-			qui replace scpc_xs=scpc_x/sqrt(scpc_xs) if e(sample) & scpc_xs>0			
-			mata set_Wx_cluster("`clist'", "`scpc_sel'")
-			}
-		}		
-		mata set_scpcstats("`w'","`scpc_sel'")
-		matrix scpctab[`i', 1] = scpcstats[1, 1..6]
-		if("`cvs'"=="cvs"){
-			mata set_scpccvs()
-			matrix scpc_cvs[`i', 1] = scpc_cvs_c[1, 1..4]
-		}
-		local ++i
+	// Build numerically sorted s_1..s_d coordinate list (avoids unab alphabetical/dataset ordering bugs)
+	local slist ""
+	local d 0
+	local slist_ok 1
+	capture unab raw_slist : s_*
+	if _rc != 0 {
+		local slist_ok 0
 	}
+	else {
+		local d : word count `raw_slist'
+		forvalues s_idx = 1/`d' {
+			capture confirm numeric variable s_`s_idx'
+			if _rc != 0 {
+				local slist_ok 0
+				continue, break
+			}
+			local slist "`slist' s_`s_idx'"
+		}
+	}
+
+	local s_has_miss 0
+	if `slist_ok' == 1 {
+		foreach svar of local slist {
+			qui count if missing(`svar') & e(sample)
+			if r(N) > 0 {
+				local s_has_miss 1
+				continue, break
+			}
+		}
+	}
+
+	// Check Rust plugin availability and Milestone 1 exact OLS eligibility
+	local use_rust 0
+	if "`req_backend'" != "fallback" {
+		local plugin_ok 0
+		capture plugin call _scpc_rust_plugin, ping
+		if _rc == 0 {
+			local plugin_ok 1
+		}
+		else {
+			capture program list _scpc_rust_plugin
+			if _rc != 0 {
+				capture program _scpc_rust_plugin, plugin using("scpc_rust.plugin")
+				if _rc != 0 {
+					capture findfile "scpc_rust.plugin"
+					if _rc == 0 {
+						capture program _scpc_rust_plugin, plugin using("`r(fn)'")
+					}
+				}
+			}
+			capture plugin call _scpc_rust_plugin, ping
+			if _rc == 0 {
+				local plugin_ok 1
+			}
+		}
+
+		local rust_eligible 1
+		local rust_reason ""
+		if `plugin_ok' == 0 {
+			local rust_eligible 0
+			local rust_reason "scpc_rust.plugin could not be loaded or ping failed"
+		}
+		else if "`e(cmd)'" != "regress" {
+			local rust_eligible 0
+			local rust_reason "backend(rust) only supports e(cmd)==regress in Milestone 1 (got `e(cmd)')"
+		}
+		else if "`e(clustvar)'" != "" {
+			local rust_eligible 0
+			local rust_reason "backend(rust) does not support clustered estimation in Milestone 1"
+		}
+		else if "`e(wexp)'" != "" {
+			local rust_eligible 0
+			local rust_reason "backend(rust) does not support weighted estimation in Milestone 1"
+		}
+		else if `slist_ok' == 0 {
+			local rust_eligible 0
+			local rust_reason "s_* variables not continuously numbered starting from s_1"
+		}
+		else if `s_has_miss' == 1 {
+			local rust_eligible 0
+			local rust_reason "missing value(s) in s_* coordinate variables"
+		}
+		else if "`latlong'" != "" & `d' != 2 {
+			local rust_eligible 0
+			local rust_reason "latlong option requires exactly s_1 and s_2"
+		}
+		else if `avc' <= 0.001 | `avc' >= 0.99 {
+			local rust_eligible 0
+			local rust_reason "backend(rust) requires avc strictly between 0.001 and 0.99"
+		}
+
+		if `rust_eligible' == 1 {
+			qui count if e(sample)
+			local n_active = r(N)
+			if `n_active' < 5 | `n_active' >= 4500 {
+				local rust_eligible 0
+				local rust_reason "backend(rust) requires 5 <= N < 4500 in active sample in Milestone 1 (got `n_active')"
+			}
+		}
+
+		if `rust_eligible' == 1 {
+			tempname b_full bread_full
+			matrix `b_full' = e(b)
+			matrix `bread_full' = e(V_modelbased)
+			local p = colsof(`b_full')
+			if rowsof(`bread_full') != `p' | colsof(`bread_full') != `p' {
+				local rust_eligible 0
+				local rust_reason "e(b) and e(V_modelbased) dimensions do not match"
+			}
+			else {
+				local b_names : colnames `b_full'
+				local has_cons 0
+				local xvars ""
+				forvalues j = 1/`p' {
+					local colname : word `j' of `b_names'
+					if `b_full'[1, `j'] == . | `bread_full'[`j', `j'] == . {
+						local rust_eligible 0
+						local rust_reason "missing entries in e(b) or e(V_modelbased)"
+						continue, break
+					}
+					if "`colname'" == "_cons" {
+						if `j' != `p' {
+							local rust_eligible 0
+							local rust_reason "_cons must be the final column of e(b)"
+							continue, break
+						}
+						local has_cons 1
+					}
+					else {
+						if strpos("`colname'", ".") > 0 | strpos("`colname'", "#") > 0 {
+							local rust_eligible 0
+							local rust_reason "omitted, factor, or interaction terms (`colname') are not supported in Milestone 1 rust backend"
+							continue, break
+						}
+						capture confirm numeric variable `colname'
+						if _rc != 0 {
+							local rust_eligible 0
+							local rust_reason "regressor '`colname'' is not a numeric variable"
+							continue, break
+						}
+						if `bread_full'[`j', `j'] <= 0 {
+							local rust_eligible 0
+							local rust_reason "collinear or dropped regressor '`colname'' detected"
+							continue, break
+						}
+						local xvars "`xvars' `colname'"
+					}
+				}
+			}
+		}
+
+		if `rust_eligible' == 1 {
+			local use_rust 1
+		}
+		else if "`req_backend'" == "rust" {
+			di as error "`rust_reason'"
+			exit 198
+		}
+	}
+
+	if `use_rust' == 1 {
+		tempvar scpc_sel
+		scpc_setscores, scpc_sel(`scpc_sel')
+
+		local score_vars ""
+		forvalues j = 1/`p' {
+			local score_vars "`score_vars' scpc_score`j'"
+		}
+
+		local k_use = min(`p', int(`k'))
+		local k `k_use'
+		tempname b_sub c0_scal cv_scal q_scal
+		matrix `b_sub' = `b_full'[1..., 1..`k_use']
+		matrix scpctab = `b_sub'' * (1, 1, 1, 1, 1, 1)
+		local cvs_arg "_"
+		if "`cvs'" == "cvs" {
+			matrix scpc_cvs = `b_sub'' * (1, 1, 1, 1)
+			local cvs_arg "scpc_cvs"
+		}
+
+		local latlong_flag = ("`latlong'" != "")
+		local uncond_flag = ("`uncond'" != "")
+		local cvs_flag = ("`cvs'" != "")
+		local plugin_vars "`slist' `score_vars'"
+		if `uncond_flag' == 0 {
+			local plugin_vars "`plugin_vars' `xvars'"
+		}
+
+		local avc_arg = trim("`: display %21.16g `avc''")
+		plugin call _scpc_rust_plugin `plugin_vars' if `scpc_sel' == 1, ///
+			exact_scpc `d' `p' `k_use' `has_cons' "`avc_arg'" `latlong_flag' `uncond_flag' `cvs_flag' "`nthreads'" ///
+			"`b_full'" "`bread_full'" scpctab "`cvs_arg'" "`c0_scal'" "`cv_scal'" "`q_scal'"
+
+		di as text "found " %6.0f `n_active' " observations / clusters and " %3.0f `d' "-dimensional locations in s_*"
+		if `latlong_flag' == 0 {
+			di as text "using Euclidan norm to compute distance between locations stored in s_*"
+		}
+		else {
+			di as text "Computing distances on surface of sphere treating s_1 as latitude and s_2 as longitude"
+		}
+		di as text "SCPC optimal q = " %3.0f scalar(`q_scal') " for maximal average pairwise correlation = " %5.3f `avc'
+
+		local c0_val = scalar(`c0_scal')
+		local cv_val = scalar(`cv_scal')
+		local q_val = scalar(`q_scal')
+		local backend_used "rust"
+	}
+	else {
+		// ENSURE COORDINATES ARE UNIQUE WITHIN CLUSTERS
+		if( "`e(clustvar)'"!="") {
+			unab tmp_svarlist: s_*
+			qui foreach tmp_svar of varlist `tmp_svarlist'{
+				tempvar unique_coords_tag
+				tempvar unique_coords_num
+				egen `unique_coords_tag' = tag(`e(clustvar)' `tmp_svar')
+				egen `unique_coords_num' = total(`unique_coords_tag'), by(`e(clustvar)')
+				sum `unique_coords_num'
+				if (`r(min)'!=1 | `r(max)'!=1){
+					noi disp as text "coordinates not constant within clusters; aborting"
+					exit(999)
+				}
+			}
+		}
+		// -----------------------------------------
+		
+		if( "`e(clustvar)'"!="") {
+			tempvar es
+			gen `es'=0 if e(sample)
+			sort `e(clustvar)' `es'
+		}
+		tempvar scpc_sel
+		scpc_setscores, scpc_sel(`scpc_sel')
+		mata setOmsWfin(`avc',"`scpc_sel'","`latlong'")
+		
+		qui sum `scpc_sel', detail
+		tempname neff 
+		matrix `neff'=r(sum)
+		matrix b=e(b)	
+		matrix scpc_Bread0=e(V_modelbased)
+		local clist 
+		local na : colnames b
+		if(e(cmd)=="regress"){
+			local has_cons_fb 0
+			tokenize `na'
+			forval j = 1/`= colsof(b)' {
+				if "``j''" != "_cons"  {
+					local clist `clist' ``j''
+				}
+				else {
+					local has_cons_fb 1
+				}
+			}
+			if `has_cons_fb' == 1 {
+				local clist="qui reg scpc_rx `clist'"
+			}
+			else {
+				local clist="qui reg scpc_rx `clist', noconstant"
+			}
+		}	
+		else if(e(cmd)=="ivregress"){
+			local elist `e(insts)'
+			local i=`: word count `e(instd)''+1
+			
+			tempvar ess
+			qui gen `ess'=0
+			qui replace `ess'=1 if e(sample)
+			_estimates hold oreg, restore
+			cap drop scpc_fs_*
+			local clist 
+			tokenize `na'
+			forval j = 1/`= colsof(b)' {
+				if(`j'<`i'){			
+					qui reg ``j'' `elist' if `ess'
+					qui predict double scpc_fs_`j', xb
+					qui replace scpc_fs_`j'=. if !`ess'
+					local clist `clist' scpc_fs_`j'
+				}
+				else{
+					local clist `clist' ``j''
+				}
+			}
+			matrix colnames scpc_Bread0 = `clist'
+			_estimates unhold oreg		
+			local clist="qui ivregress 2sls scpc_rx `e(exogr)' (`e(instd)' = `e(insts)' )"	
+		}
+		else if("`uncond'"==""){
+			disp as text "conditional critical values only supported for ivregress 2sls and regress, use option uncond for only unconditionally valid critical values; aborting"
+			exit(999)
+		}
+		
+		local k=min(colsof(b),int(`k'))
+		matrix b=b[1..., 1..`k']
+		local na : colnames b
+		matrix scpctab =b'*(1,1,1,1,1,1)
+		matrix scpc_cvs =b'*(1,1,1,1)
+
+		tokenize `na'
+		
+		// Loop through covariates
+		local i = 1	
+		while "``i''" != "" {
+			tempvar w
+			matrix coef = `neff'*scpc_Bread[`i', 1...]
+			qui matrix score double `w' = coef if `scpc_sel' == 1		
+			qui replace `w' = `w' + b[1,`i'] if `scpc_sel' == 1
+			if("`uncond'"==""){	
+				capture drop scpc_x 
+				capture drop scpc_xs			
+				matrix coef = `neff'*scpc_Bread0[`i', 1...]	
+				qui matrix score double scpc_x = coef if e(sample)						
+				if( "`e(clustvar)'"=="") {
+					qui gen double scpc_xs=sign(scpc_x) if e(sample)				
+					mata set_Wx_nocluster("`clist'", "`scpc_sel'")
+				}
+			else{
+				qui by `e(clustvar)': egen double scpc_xs=total(scpc_x*scpc_x) if e(sample)
+				qui replace scpc_xs=scpc_x/sqrt(scpc_xs) if e(sample) & scpc_xs>0			
+				mata set_Wx_cluster("`clist'", "`scpc_sel'")
+				}
+			}		
+			mata set_scpcstats("`w'","`scpc_sel'")
+			matrix scpctab[`i', 1] = scpcstats[1, 1..6]
+			if("`cvs'"=="cvs"){
+				mata set_scpccvs()
+				matrix scpc_cvs[`i', 1] = scpc_cvs_c[1, 1..4]
+			}
+			local ++i
+		}
+
+		tempname c0_scal cv_scal q_scal
+		mata get_scpc_meta("`c0_scal'", "`cv_scal'", "`q_scal'")
+		local c0_val = scalar(`c0_scal')
+		local cv_val = scalar(`cv_scal')
+		local q_val = scalar(`q_scal')
+		local backend_used "fallback"
+	}
+
 	matrix colnames scpctab = "Coef" "Std_Err" "  t  " "P>|t|" "95% Conf" "Interval"
 	local n = rowsof(scpctab)
 	local ands = `n'*"&"
@@ -942,6 +1199,10 @@ program scpc, eclass sortpreserve
 	}
  	// Return results
 	ereturn matrix scpcstats = scpctab
+	ereturn scalar q = `q_val'
+	ereturn scalar c0 = `c0_val'
+	ereturn scalar cv = `cv_val'
+	ereturn local backend "`backend_used'"
 	cap drop scpc_*
 end
 

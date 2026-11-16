@@ -27,3 +27,4 @@ d Support: email umueller@princeton.edu
 d
 F scpc.ado
 F scpc.sthlp
+f scpc_rust.plugin
