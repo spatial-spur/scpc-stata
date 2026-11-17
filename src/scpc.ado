@@ -1012,6 +1012,111 @@ void set_Wx_nocluster(string scalar Vname, string scalar sel,
 	set_ccspc()
 }
 
+void set_Wx_iv_nocluster(string scalar u_vars, string scalar v_vars,
+	string scalar sample_sel, string scalar weight_before, string scalar weight_after)
+{
+	external real scalar condflag
+	external real matrix Wfin, Wx
+	external real vector permfin
+	real matrix U_iv, PZX, A, V_T, V_iv, B_q, rx_orig, rr_orig, wx_orig
+	real colvector xb, xa, col_norms
+	real scalar pre_max, m_obs, p_iv, q
+
+	condflag = 1
+	Wx = Wfin
+	xb = st_data(., weight_before, sample_sel)
+	xa = st_data(., weight_after, sample_sel)
+	Wx[., 1] = Wfin[., 1] :* (xb[permfin] :* xa[permfin])
+
+	q = cols(Wfin) - 1
+	if (q > 0) {
+		U_iv = st_data(., tokens(u_vars), sample_sel)
+		PZX = st_data(., tokens(v_vars), sample_sel)
+		m_obs = rows(U_iv)
+		p_iv = cols(U_iv)
+		A = cross(U_iv, PZX)
+		V_T = lusolve(A', PZX')
+		if (rows(V_T) != p_iv | cols(V_T) != m_obs | hasmissing(V_T)) {
+			stata("disp as text " + char(34) + "IV residualizer is rank deficient; aborting" + char(34))
+			exit(999)
+		}
+		V_iv = V_T'
+
+		B_q = J(m_obs, q, 0)
+		B_q[permfin, .] = Wfin[., 2::cols(Wfin)]
+		rx_orig = B_q :* xb
+		pre_max = max(sqrt(colsum(rx_orig :^ 2)))
+		rr_orig = rx_orig - V_iv * cross(U_iv, rx_orig)
+		wx_orig = rr_orig :* xa
+		Wx[., 2::cols(Wx)] = wx_orig[permfin, .]
+
+		col_norms = sqrt(colsum(Wx[., 2::cols(Wx)] :^ 2))'
+		if (pre_max == 0 | pre_max >= . | max(col_norms) >= . | max(col_norms) <= 1e-12 * pre_max) {
+			stata("disp as text " + char(34) + "conditional projection collapsed all non-constant W columns; aborting" + char(34))
+			exit(999)
+		}
+	}
+	set_ccspc()
+}
+
+void set_Wx_iv_cluster(string scalar u_vars, string scalar v_vars,
+	string scalar sample_sel, string scalar cl_idx_var,
+	string scalar weight_before, string scalar weight_after)
+{
+	external real scalar condflag
+	external real matrix Wfin, Wx
+	external real vector permfin
+	real matrix U_iv, PZX, A, V_T, V_iv, W_unperm, W_indiv, rx, rr, agg_unperm, info, col1_unperm
+	real colvector xb, xa, cl_vec, diag_g
+	real rowvector col_norms
+	real scalar pre_max_cl, m_obs, p_iv, n_cl, q
+
+	condflag = 1
+	Wx = Wfin
+	n_cl = rows(Wfin)
+	cl_vec = st_data(., cl_idx_var, sample_sel)
+	xb = st_data(., weight_before, sample_sel)
+	xa = st_data(., weight_after, sample_sel)
+	info = panelsetup(cl_vec, 1)
+
+	W_unperm = J(n_cl, cols(Wfin), 0)
+	W_unperm[permfin, .] = Wfin
+	W_indiv = W_unperm[cl_vec, .]
+
+	col1_unperm = panelsum(W_indiv[., 1] :* xb :* xa, info)
+	Wx[., 1] = col1_unperm[permfin]
+
+	q = cols(Wfin) - 1
+	if (q > 0) {
+		diag_g = sqrt(n_cl) * Wx[., 1]
+		pre_max_cl = max(sqrt(colsum((Wfin[., 2::cols(Wfin)] :* diag_g) :^ 2)))
+
+		U_iv = st_data(., tokens(u_vars), sample_sel)
+		PZX = st_data(., tokens(v_vars), sample_sel)
+		m_obs = rows(U_iv)
+		p_iv = cols(U_iv)
+		A = cross(U_iv, PZX)
+		V_T = lusolve(A', PZX')
+		if (rows(V_T) != p_iv | cols(V_T) != m_obs | hasmissing(V_T)) {
+			stata("disp as text " + char(34) + "IV residualizer is rank deficient; aborting" + char(34))
+			exit(999)
+		}
+		V_iv = V_T'
+
+		rx = W_indiv[., 2::cols(W_indiv)] :* xb
+		rr = rx - V_iv * cross(U_iv, rx)
+		agg_unperm = panelsum(rr :* xa, info)
+		Wx[., 2::cols(Wx)] = agg_unperm[permfin, .]
+
+		col_norms = sqrt(colsum(Wx[., 2::cols(Wx)] :^ 2))
+		if (pre_max_cl == 0 | pre_max_cl >= . | max(col_norms) >= . | max(col_norms) <= 1e-12 * pre_max_cl) {
+			stata("disp as text " + char(34) + "conditional projection collapsed all non-constant W columns; aborting" + char(34))
+			exit(999)
+		}
+	}
+	set_ccspc()
+}
+
 
 void set_scpccvs(string scalar outmat)
 {	
@@ -1092,8 +1197,11 @@ program scpc_setscores, sortpreserve
 		predict double `stata_scr'*,sc
 		
 		local j=`: word count `e(instd)''+1
-		gen double `e'=`stata_scr'`j'
 		local na : colnames e(V)
+		local ncol_v : word count `na'
+		if (`ncol_v' >= `j') {
+			gen double `e'=`stata_scr'`j'
+		}
 		tokenize `na'
 		local i = 1
 		while "``i''" != "" {
@@ -1627,14 +1735,22 @@ program scpc, eclass sortpreserve
 			}
 		}	
 		else if(e(cmd)=="ivregress"){
+			// Section 5.3 uses Xi_s' M' Xi R where M' = I - P_Z X (X' P_Z X)^-1 X'.
+			local weight_before `x_var'
+			local weight_after `xs_var'
 			local elist `e(insts)'
 			local i=`: word count `e(instd)''+1
 			
-			tempvar ess
-			qui gen `ess'=0
-			qui replace `ess'=1 if e(sample)
+			tempvar ess one_iv cl_idx_fb
+			qui gen byte `ess' = e(sample)
+			qui gen double `one_iv' = 1 if `ess'
+			if "`e(clustvar)'" != "" {
+				qui gen double `cl_idx_fb' = sum(`scpc_sel') if e(sample)
+			}
 			_estimates hold `oreg_hold', restore
-			local clist 
+			local clist
+			local iv_u_vars
+			local iv_v_vars
 			local has_cons_iv : list posof "_cons" in na
 			local reg_cons_opt ""
 			if `has_cons_iv' == 0 {
@@ -1642,20 +1758,31 @@ program scpc, eclass sortpreserve
 			}
 			tokenize `na'
 			forval j = 1/`= colsof(`b_mat')' {
-				if(`j'<`i'){			
+				if(`j'<`i'){
 					tempvar fs_`j'
 					qui reg ``j'' `elist' if `ess'`reg_cons_opt'
 					qui predict double `fs_`j'', xb
 					qui replace `fs_`j''=. if !`ess'
 					local clist `clist' `fs_`j''
+					local iv_u_vars `iv_u_vars' ``j''
+					local iv_v_vars `iv_v_vars' `fs_`j''
 				}
 				else{
 					local clist `clist' ``j''
+					if "``j''" == "_cons" {
+						local iv_u_vars `iv_u_vars' `one_iv'
+						local iv_v_vars `iv_v_vars' `one_iv'
+					}
+					else if !(`b_mat'[1, `j'] == 0 & `scpc_Bread0'[`j', `j'] == 0) {
+						qui fvrevar ``j'' if `ess'
+						local rv "`r(varlist)'"
+						local iv_u_vars `iv_u_vars' `rv'
+						local iv_v_vars `iv_v_vars' `rv'
+					}
 				}
 			}
 			matrix colnames `scpc_Bread0' = `clist'
-			_estimates unhold `oreg_hold'		
-			local clist="qui ivregress 2sls `rx_var' `e(exogr)' (`e(instd)' = `e(insts)' )`reg_cons_opt'"
+			_estimates unhold `oreg_hold'
 		}
 		else if("`uncond'"==""){
 			disp as text "conditional critical values only supported for ivregress 2sls and regress, use option uncond for only unconditionally valid critical values; aborting"
@@ -1686,12 +1813,22 @@ program scpc, eclass sortpreserve
 				qui matrix score double `x_var' = `coef_mat' if e(sample)						
 				if( "`e(clustvar)'"=="") {
 					qui gen double `xs_var'=sign(`x_var') if e(sample)				
-					mata set_Wx_nocluster("`clist'", "`scpc_sel'", "`weight_before'", "`weight_after'", "`r_var'", "`rx_var'", "`wx_hold'")
+					if ("`e(cmd)'"=="ivregress") {
+						mata set_Wx_iv_nocluster("`iv_u_vars'", "`iv_v_vars'", "`ess'", "`weight_before'", "`weight_after'")
+					}
+					else {
+						mata set_Wx_nocluster("`clist'", "`scpc_sel'", "`weight_before'", "`weight_after'", "`r_var'", "`rx_var'", "`wx_hold'")
+					}
 				}
-			else{
-				qui by `e(clustvar)': egen double `xs_var'=total(`x_var'*`x_var') if e(sample)
-				qui replace `xs_var'=`x_var'/sqrt(`xs_var') if e(sample) & `xs_var'>0			
-				mata set_Wx_cluster("`clist'", "`scpc_sel'", "`weight_before'", "`weight_after'", "`r_var'", "`rx_var'", "`wx_hold'")
+				else{
+					qui by `e(clustvar)': egen double `xs_var'=total(`x_var'*`x_var') if e(sample)
+					qui replace `xs_var'=`x_var'/sqrt(`xs_var') if e(sample) & `xs_var'>0
+					if ("`e(cmd)'"=="ivregress") {
+						mata set_Wx_iv_cluster("`iv_u_vars'", "`iv_v_vars'", "`ess'", "`cl_idx_fb'", "`weight_before'", "`weight_after'")
+					}
+					else {
+						mata set_Wx_cluster("`clist'", "`scpc_sel'", "`weight_before'", "`weight_after'", "`r_var'", "`rx_var'", "`wx_hold'")
+					}
 				}
 			}		
 			mata set_scpcstats("`w'","`scpc_sel'","`stats_row'")
