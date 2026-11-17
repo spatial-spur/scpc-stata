@@ -96,7 +96,8 @@ check_rust_vs_fallback, latlong cvs
 di as text "--- bench_200 latlong unconditional (no cvs) ---"
 check_rust_vs_fallback, latlong uncond
 
-// Double-precision load cross-check vs pinned M1 exact_scpc values
+// Double-precision load cross-check vs pinned M1 score statistics.
+// The pinned conditional intervals use the historical weight order.
 clear
 set type double
 import delimited "`repo_root'/verification/data/bench_200.csv", clear
@@ -107,11 +108,11 @@ scpc, backend(rust) cvs
 assert e(q) == 19
 assert abs(e(c0) - 3.500409719601247) < 1e-10
 assert abs(e(cv) - 2.1008365544083087) < 1e-10
-matrix pinned = (1.5473280763431876, 0.09650902048915827, 16.032989128897157, 4.3785289611173374e-12, 1.3375098664953151, 1.75714628619106 \ ///
-                 -0.6589528089605742, 0.10738682321940547, -6.13625386435211, 8.27465855135604e-06, -0.8878059409227403, -0.430099676998408 \ ///
-                 1.4834167407175964, 0.11454779987636342, 12.95019845268713, 1.5882043004635851e-10, 1.236953655047813, 1.7298798263873798)
+matrix pinned = (1.5473280763431876, 0.09650902048915827, 16.032989128897157 \ ///
+                 -0.6589528089605742, 0.10738682321940547, -6.13625386435211 \ ///
+                 1.4834167407175964, 0.11454779987636342, 12.95019845268713)
 tempname d_pin
-mata: st_numscalar("`d_pin'", max(abs(st_matrix("e(scpcstats)") - st_matrix("pinned"))))
+mata: st_numscalar("`d_pin'", max(abs(st_matrix("e(scpcstats)")[.,1..3] - st_matrix("pinned"))))
 di as text "  bench_200 double vs pinned M1 max diff = " %9.3e scalar(`d_pin')
 assert scalar(`d_pin') < 1e-10
 

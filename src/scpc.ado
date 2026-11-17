@@ -603,7 +603,8 @@ void set_ccspc()
 	cvxfin=getcv(Omsxfin,cols(Wx)-1,0.05)	
 }
 
-void set_Wx_cluster(string scalar Vname, string scalar sel)
+void set_Wx_cluster(string scalar Vname, string scalar sel,
+	string scalar weight_before, string scalar weight_after)
 {	
 	external real scalar condflag
 	external real matrix Wfin
@@ -625,24 +626,25 @@ void set_Wx_cluster(string scalar Vname, string scalar sel)
 		stata("qui by \`e(clustvar)': egen double scpc_rx=total(scpc_r) if e(sample)")	// BACKSLASH TO PREVENT EVALUATION WHEN FUNCTION IS FIRST READ
 		stata("cap drop scpc_r")
 		if(i==1){
-			stata("qui gen double scpc_r=scpc_rx*scpc_xs if e(sample)")
+			stata("qui gen double scpc_r=scpc_rx*"+weight_before+" if e(sample)")
 		}
 		else{
-			stata("qui replace scpc_rx=scpc_rx*scpc_xs")
+			stata("qui replace scpc_rx=scpc_rx*"+weight_before)
 			stata("_estimates hold oreg, restore")		
 			stata(Vname)
 			stata("qui predict double scpc_r, resid")	
 			stata("_estimates unhold oreg")
 		}
 		stata("cap drop scpc_rx")
-		stata("qui by \`e(clustvar)': egen double scpc_rx=total(scpc_r*scpc_x) if e(sample)")  // BACKSLASH TO PREVENT EVALUATION WHEN FUNCTION IS FIRST READ
+		stata("qui by \`e(clustvar)': egen double scpc_rx=total(scpc_r*"+weight_after+") if e(sample)")  // BACKSLASH TO PREVENT EVALUATION WHEN FUNCTION IS FIRST READ
 		
 		Wx[.,i]=st_data(.,"scpc_rx",sel)[permfin]
 	}
 	set_ccspc()
 }
 
-void set_Wx_nocluster(string scalar Vname, string scalar sel)
+void set_Wx_nocluster(string scalar Vname, string scalar sel,
+	string scalar weight_before, string scalar weight_after)
 {	
 	external real scalar condflag
 	external real matrix Wfin
@@ -664,13 +666,13 @@ void set_Wx_nocluster(string scalar Vname, string scalar sel)
 			stata("qui gen double scpc_rx=scpc_r*scpc_xs*scpc_x if e(sample)")
 		}
 		else{
-			stata("qui gen double scpc_rx=scpc_r*scpc_xs if e(sample)")
+			stata("qui gen double scpc_rx=scpc_r*"+weight_before+" if e(sample)")
 			stata("_estimates hold oreg, restore")
 			stata(Vname)
 			stata("cap drop scpc_r")
 			stata("qui predict double scpc_r, resid")	
 			stata("_estimates unhold oreg")
-			stata("qui replace scpc_rx=scpc_r*scpc_x if e(sample)")
+			stata("qui replace scpc_rx=scpc_r*"+weight_after+" if e(sample)")
 		}		
 		Wx[.,i]=st_data(.,"scpc_rx",sel)[permfin]		
 	}	
@@ -878,7 +880,7 @@ program scpc, eclass sortpreserve
 	local use_rust 0
 	if "`req_backend'" != "fallback" {
 		local plugin_ok 0
-		capture plugin call _scpc_rust_plugin, ping
+		capture plugin call _scpc_rust_plugin, ping_v2
 		if _rc == 0 {
 			local plugin_ok 1
 		}
@@ -893,7 +895,7 @@ program scpc, eclass sortpreserve
 					}
 				}
 			}
-			capture plugin call _scpc_rust_plugin, ping
+			capture plugin call _scpc_rust_plugin, ping_v2
 			if _rc == 0 {
 				local plugin_ok 1
 			}
@@ -903,7 +905,7 @@ program scpc, eclass sortpreserve
 		local rust_reason ""
 		if `plugin_ok' == 0 {
 			local rust_eligible 0
-			local rust_reason "scpc_rust.plugin could not be loaded or ping failed"
+			local rust_reason "compatible scpc_rust.plugin (v2) could not be loaded"
 		}
 		else if "`e(cmd)'" != "regress" {
 			local rust_eligible 0
@@ -1083,8 +1085,13 @@ program scpc, eclass sortpreserve
 		matrix b=e(b)	
 		matrix scpc_Bread0=e(V_modelbased)
 		local clist 
+		local weight_before scpc_xs
+		local weight_after scpc_x
 		local na : colnames b
 		if(e(cmd)=="regress"){
+			// Section 5.1 uses Xi_s' M_V Xi R for the OLS denominator weights.
+			local weight_before scpc_x
+			local weight_after scpc_xs
 			local has_cons_fb 0
 			tokenize `na'
 			forval j = 1/`= colsof(b)' {
@@ -1155,12 +1162,12 @@ program scpc, eclass sortpreserve
 				qui matrix score double scpc_x = coef if e(sample)						
 				if( "`e(clustvar)'"=="") {
 					qui gen double scpc_xs=sign(scpc_x) if e(sample)				
-					mata set_Wx_nocluster("`clist'", "`scpc_sel'")
+					mata set_Wx_nocluster("`clist'", "`scpc_sel'", "`weight_before'", "`weight_after'")
 				}
 			else{
 				qui by `e(clustvar)': egen double scpc_xs=total(scpc_x*scpc_x) if e(sample)
 				qui replace scpc_xs=scpc_x/sqrt(scpc_xs) if e(sample) & scpc_xs>0			
-				mata set_Wx_cluster("`clist'", "`scpc_sel'")
+				mata set_Wx_cluster("`clist'", "`scpc_sel'", "`weight_before'", "`weight_after'")
 				}
 			}		
 			mata set_scpcstats("`w'","`scpc_sel'")
