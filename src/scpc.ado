@@ -588,16 +588,18 @@ real scalar nextU()
 }
 
 void jumble_s(real matrix s, real scalar m)
-// randomly jumbles first m rows of location matrix s
+// randomly jumbles first m rows of location matrix s without replacement
 {
 	real scalar i,j,n
 	real vector sj
 	n=rows(s)	
 	for(i=1;i<=m;i++){
-		j=floor(nextU()*n)+1		
-		sj=s[j,.]
-		s[j,.]=s[i,.]
-		s[i,.]=sj
+		j=i+floor(nextU()*(n-i+1))
+		if (j != i) {
+			sj=s[j,.]
+			s[j,.]=s[i,.]
+			s[i,.]=sj
+		}
 	}
 }	
 
@@ -640,7 +642,7 @@ void LNsetWc0(real matrix s,real scalar avc,real matrix W, real scalar c0, real 
 		symeigensystemselecti(demeanmat(exp(-c0*ms[i].mat)),(1,qmax),W0,evals)
 		Wx=J(n,qmax,0)		// m x qmax eigenvectors from ith random set of m locations
 		for(j=1;j<=m;j++){
-			v=exp(-c0*sqrt(rowsum((s:-ms[i].s[j,.]):^2)))
+			v=exp(-c0*getdistvec(s, J(n, 1, 1)*ms[i].s[j,.]))
 			Wx=Wx+v*W0[j,.]		// Nystrom extension 
 		}
 		Wx=Wx:-mean(Wx)
@@ -683,7 +685,7 @@ struct mats vector LNgetOms(real matrix s, real scalar c0, real scalar cmax,real
 	external real scalar qmax
 	real scalar i, c, n
 	real vector inds,dist,cd
-	real matrix W1,W2
+	real matrix W1,W2,gram
 	
 	n=rows(s)
 	Oms=mats(getnc(c0,cmax))
@@ -692,10 +694,11 @@ struct mats vector LNgetOms(real matrix s, real scalar c0, real scalar cmax,real
 	dist=getdistvec(s[inds[1::capM],.],s[inds[2::capM+1],.])
 	W1=W[inds[1::capM],.]		
 	W2=W[inds[2::capM+1],.]
+	gram=cross(W, W)
 	c=c0
 	for(i=1;i<=length(Oms);i++){
 		cd=exp(-c*dist)
-		Oms[i].mat=I(cols(W))+.5*(n*(n-1)/capM)*(cross(W1,cd,W2)+cross(W2,cd,W1))
+		Oms[i].mat=gram+.5*(n*(n-1)/capM)*(cross(W1,cd,W2)+cross(W2,cd,W1))
 		c=c*cgridfac			
 	}
 	return(Oms)
@@ -714,14 +717,21 @@ void setcvsflag(real scalar cvsf)
 }
 
 
+void set_method_opts(real scalar is_approx, real scalar seed_in)
+{
+	external real scalar approxflag, seedval
+	approxflag = (is_approx != 0)
+	seedval = seed_in
+}
+
 void setOmsWfin(real scalar avc0, string scalar sel, string scalar latlong)
 {
 	external real matrix s
 	external real scalar c0,cmax
-	real scalar cv,n,floor_corr,minavc_eff
+	real scalar cv,n,floor_corr,minavc_eff,is_approx,seed_use,q_limit
 	external real matrix distmat
 	real matrix W
-	external real scalar random_t
+	external real scalar random_t, approxflag, seedval
 	external real scalar latlongflag
 	struct mats vector Oms
 	external real scalar qmax, capM, m, cgridfac, capN, minavc
@@ -808,7 +818,9 @@ void setOmsWfin(real scalar avc0, string scalar sel, string scalar latlong)
 			}
 		}
 	}
-	if (n < 4500) {
+	is_approx = (length(approxflag) > 0 ? (approxflag != 0) : (n >= 4500))
+	seed_use = (length(seedval) > 0 ? seedval : 1)
+	if (is_approx == 0) {
 		permfin = (1::n)
 		distmat = getdistmat(s)
 		dvec = lvech(distmat)
@@ -816,33 +828,29 @@ void setOmsWfin(real scalar avc0, string scalar sel, string scalar latlong)
 		minavc_eff = floor_corr + (1 - floor_corr) * minavc
 		c0 = getc0fromavc(dvec, avc0)
 		cmax = getc0fromavc(dvec, minavc_eff)
+		q_limit = n - 1
+	}
+	else {
+		capN=20			// number of random sets of locations (of size m) used to approximate eigenvectors
+		capM=1000000		// number of location pairs used to approximate Om(c) (in production: capM=1000000 or so)
+		m=min((1000, n))	// size of set of locations for which eigenvector is computed, and then Nystrom extended from m to n
+		normalize_s(s)
+		q_limit = m - 1
 	}
 	while(1){
-		qmax=min((n-1,qmax))
-		if(n<4500){
+		qmax=min((q_limit,qmax))
+		if(is_approx==0){
 	// code for small n
 			W=getW(distmat,c0)
 			Oms=getOms(distmat,c0,cmax,W)		
 			}
 		else{
-			capN=20			// number of random sets of locations (of size m) used to approximate eigenvectors
-			capM=1000000		// number of location pairs used to approximate Om(c) (in production: capM=1000000 or so)
-			m=1000			// size of set of locations for which eigenvector is computed, and then Nystrom extended from m to n (in production: m=1000 or so)
-							// note: m cannot be larger than n
-
-	//		stata("display c(current_time)")
-			random_t=1
-			normalize_s(s)	
+			random_t=seed_use
 			LNsetWc0(s,avc0,W,c0,cmax)
-	//		"done with W and c0"
-	//		stata("display c(current_time)")
-
 			Oms=LNgetOms(s,c0,cmax,W)	
-	//		"done with Oms"
-	//		stata("display c(current_time)")
 		}
 		setfinalW(Oms,W,cv)
-		if(cols(W)-1<qmax | qmax==n-1) break
+		if(cols(W)-1<qmax | qmax==q_limit) break
 		qmax=round(qmax+qmax/2,1)
 	}
 	stata("disp as text"+char(34)+"SCPC optimal q = "+strofreal(cols(W)-1, "%3.0f")+" for maximal average pairwise correlation = "+strofreal(avc0, "%5.3f")+`pavc'"")
@@ -890,10 +898,12 @@ void set_ccspc()
 {
 	external struct mats vector Omsxfin
 	external real matrix s
-	external real scalar c0,cmax,cvxfin
+	external real scalar c0,cmax,cvxfin,approxflag
 	external real matrix distmat, Wx
+	real scalar is_approx
 	
-	if(rows(Wx)<4500){
+	is_approx = (length(approxflag) > 0 ? (approxflag != 0) : (rows(Wx) >= 4500))
+	if(is_approx==0){
 		Omsxfin=getOms(distmat,c0,cmax,Wx)		
 		}
 	else{
@@ -910,9 +920,9 @@ void set_Wx_cluster(string scalar Vname, string scalar sel,
 	external real matrix Wfin
 	external real matrix Wx
 	external real vector permfin
-	real vector r
+	real vector r, diag_g
 	real rowvector col_norms
-	real scalar i, norm_w0
+	real scalar i, pre_max_cl
 	
 	condflag=1
 	r=J(rows(Wfin),1,0)
@@ -943,9 +953,10 @@ void set_Wx_cluster(string scalar Vname, string scalar sel,
 	}
 	stata("cap drop " + r_var + " " + rx_var)
 	if (cols(Wx) > 1) {
-		norm_w0 = norm(Wx[., 1])
+		diag_g = sqrt(rows(Wfin)) * Wx[., 1]
+		pre_max_cl = max(sqrt(colsum((Wfin[., 2::cols(Wfin)] :* diag_g):^2)))
 		col_norms = sqrt(colsum(Wx[., 2::cols(Wx)]:^2))
-		if (norm_w0 == 0 | norm_w0 >= . | max(col_norms) >= . | max(col_norms) <= 1e-12 * norm_w0) {
+		if (pre_max_cl == 0 | pre_max_cl >= . | max(col_norms) >= . | max(col_norms) <= 1e-12 * pre_max_cl) {
 			stata("disp as text "+char(34)+"conditional projection collapsed all non-constant W columns; aborting"+char(34))
 			exit(999)
 		}
@@ -1130,6 +1141,9 @@ program scpc, eclass sortpreserve
 			avc(real -1) ///
 			latlong		///
 			uncond   ///
+			exact ///
+			approx ///
+			seed(real 1) ///
 			backend(string) ///
 			nthreads(integer -1) ///
 		]
@@ -1137,6 +1151,16 @@ program scpc, eclass sortpreserve
 //		avc(real 1.0)
 //		]
 	
+	if "`exact'" != "" & "`approx'" != "" {
+		di as error "cannot specify both exact and approx options"
+		exit 198
+	}
+	if `seed' < 0 | `seed' >= 4294967296 | `seed' != floor(`seed') {
+		di as error "seed() must be an integer in [0, 2^32)"
+		exit 198
+	}
+	local seed_arg = trim("`: display %15.0f `seed''")
+
 	local req_backend = lower(trim(`"`backend'"'))
 	if "`req_backend'" == "" {
 		local req_backend = lower(trim(`"$SPATIAL_BACKEND"'))
@@ -1207,11 +1231,34 @@ program scpc, eclass sortpreserve
 		}
 	}
 
-	// Check Rust plugin availability and Milestone 1 exact OLS eligibility
+	local has_cluster = ("`e(clustvar)'" != "")
+	local n_sites 0
+	if `has_cluster' == 1 {
+		tempvar cl_tag
+		qui egen `cl_tag' = tag(`e(clustvar)') if e(sample)
+		qui count if `cl_tag' == 1 & e(sample)
+		local n_sites = r(N)
+	}
+	else {
+		qui count if e(sample)
+		local n_sites = r(N)
+	}
+
+	local approx_mode = ("`approx'" != "" | ("`exact'" == "" & `n_sites' >= 4500))
+	local method_used "exact"
+	if `approx_mode' == 1 {
+		local method_used "approx"
+	}
+
+	// Check Rust plugin availability and exact SCPC eligibility
 	local use_rust 0
+	local is_iv 0
+	local n_endog 0
+	local n_z_excl 0
+	local z_excl_vars ""
 	if "`req_backend'" != "fallback" {
 		local plugin_ok 0
-		capture plugin call _scpc_rust_plugin, ping_v3
+		capture plugin call _scpc_rust_plugin, ping_v5
 		if _rc == 0 {
 			local plugin_ok 1
 		}
@@ -1226,7 +1273,7 @@ program scpc, eclass sortpreserve
 					}
 				}
 			}
-			capture plugin call _scpc_rust_plugin, ping_v3
+			capture plugin call _scpc_rust_plugin, ping_v5
 			if _rc == 0 {
 				local plugin_ok 1
 			}
@@ -1236,43 +1283,56 @@ program scpc, eclass sortpreserve
 		local rust_reason ""
 		if `plugin_ok' == 0 {
 			local rust_eligible 0
-			local rust_reason "compatible scpc_rust.plugin (v3) could not be loaded"
+			local rust_reason "compatible scpc_rust.plugin (v5) could not be loaded"
 		}
-		else if "`e(cmd)'" != "regress" {
+		else if "`e(cmd)'" == "regress" {
+			local is_iv 0
+		}
+		else if "`e(cmd)'" == "areg" {
+			if "`uncond'" == "" {
+				local rust_eligible 0
+				local rust_reason "backend(rust) requires uncond option after areg"
+			}
+		}
+		else if "`e(cmd)'" == "ivregress" {
+			if "`e(estimator)'" != "2sls" {
+				local rust_eligible 0
+				local rust_reason "backend(rust) only supports ivregress 2sls (got e(estimator)==`e(estimator)')"
+			}
+			else {
+				local is_iv 1
+			}
+		}
+		else {
 			local rust_eligible 0
-			local rust_reason "backend(rust) only supports e(cmd)==regress in Milestone 1 (got `e(cmd)')"
+			local rust_reason "backend(rust) only supports regress, ivregress 2sls, and uncond areg (got `e(cmd)')"
 		}
-		else if "`e(clustvar)'" != "" {
+
+		if `rust_eligible' == 1 & "`e(wexp)'" != "" {
 			local rust_eligible 0
-			local rust_reason "backend(rust) does not support clustered estimation in Milestone 1"
+			local rust_reason "backend(rust) does not support weighted estimation"
 		}
-		else if "`e(wexp)'" != "" {
-			local rust_eligible 0
-			local rust_reason "backend(rust) does not support weighted estimation in Milestone 1"
-		}
-		else if `slist_ok' == 0 {
+		else if `rust_eligible' == 1 & `slist_ok' == 0 {
 			local rust_eligible 0
 			local rust_reason "s_* variables not continuously numbered starting from s_1"
 		}
-		else if `s_has_miss' == 1 {
+		else if `rust_eligible' == 1 & `s_has_miss' == 1 {
 			local rust_eligible 0
 			local rust_reason "missing value(s) in s_* coordinate variables"
 		}
-		else if "`latlong'" != "" & `d' != 2 {
+		else if `rust_eligible' == 1 & "`latlong'" != "" & `d' != 2 {
 			local rust_eligible 0
 			local rust_reason "latlong option requires exactly s_1 and s_2"
 		}
-		else if `avc' <= 0.001 | `avc' >= 0.99 {
+		else if `rust_eligible' == 1 & (`avc' <= 0.001 | `avc' >= 0.99) {
 			local rust_eligible 0
 			local rust_reason "backend(rust) requires avc strictly between 0.001 and 0.99"
 		}
 
 		if `rust_eligible' == 1 {
-			qui count if e(sample)
-			local n_active = r(N)
-			if `n_active' < 5 | `n_active' >= 4500 {
+			if `n_sites' < 5 {
 				local rust_eligible 0
-				local rust_reason "backend(rust) requires 5 <= N < 4500 in active sample in Milestone 1 (got `n_active')"
+				local rust_reason "backend(rust) requires at least 5 observations/clusters (got `n_sites')"
 			}
 		}
 
@@ -1307,7 +1367,7 @@ program scpc, eclass sortpreserve
 					else {
 						if strpos("`colname'", ".") > 0 | strpos("`colname'", "#") > 0 {
 							local rust_eligible 0
-							local rust_reason "omitted, factor, or interaction terms (`colname') are not supported in Milestone 1 rust backend"
+							local rust_reason "omitted, factor, or interaction terms (`colname') are not supported in Rust backend"
 							continue, break
 						}
 						capture confirm numeric variable `colname', exact
@@ -1327,6 +1387,68 @@ program scpc, eclass sortpreserve
 			}
 		}
 
+		if `rust_eligible' == 1 & `is_iv' == 1 & "`uncond'" == "" {
+			local instd_list `"`e(instd)'"'
+			local insts_list `"`e(insts)'"'
+			local n_endog : word count `instd_list'
+			local nx_count : word count `xvars'
+			if `n_endog' < 1 | `n_endog' > `nx_count' {
+				local rust_eligible 0
+				local rust_reason "ivregress e(instd) does not align with e(b) regressors"
+			}
+			else {
+				forvalues j = 1/`n_endog' {
+					local xw : word `j' of `xvars'
+					local iw : word `j' of `instd_list'
+					if "`xw'" != "`iw'" {
+						local rust_eligible 0
+						local rust_reason "ivregress e(b) ordering differs from e(instd)"
+						continue, break
+					}
+				}
+			}
+			if `rust_eligible' == 1 {
+				local x_exog_vars ""
+				local exog_start = `n_endog' + 1
+				forvalues j = `exog_start'/`nx_count' {
+					local xw : word `j' of `xvars'
+					local x_exog_vars "`x_exog_vars' `xw'"
+				}
+				local missing_exog : list x_exog_vars - insts_list
+				if trim("`missing_exog'") != "" {
+					local rust_eligible 0
+					local rust_reason "ivregress e(insts) does not contain all exogenous regressors"
+				}
+			}
+			if `rust_eligible' == 1 {
+				local z_excl_vars : list insts_list - x_exog_vars
+				local z_excl_vars : list z_excl_vars - instd_list
+				foreach zname of local z_excl_vars {
+					if strpos("`zname'", ".") > 0 | strpos("`zname'", "#") > 0 {
+						local rust_eligible 0
+						local rust_reason "omitted, factor, or interaction instrument (`zname') is not supported in Rust backend"
+						continue, break
+					}
+					capture confirm numeric variable `zname', exact
+					if _rc != 0 {
+						local rust_eligible 0
+						local rust_reason "instrument '`zname'' is not a numeric variable"
+						continue, break
+					}
+				}
+				local n_z_excl : word count `z_excl_vars'
+				local n_exog : word count `x_exog_vars'
+				if `n_exog' + `n_z_excl' < `n_endog' {
+					local rust_eligible 0
+					local rust_reason "insufficient excluded instruments in ivregress"
+				}
+			}
+		}
+		else if `is_iv' == 1 {
+			local n_endog 0
+			local n_z_excl 0
+		}
+
 		if `rust_eligible' == 1 {
 			local use_rust 1
 		}
@@ -1338,6 +1460,22 @@ program scpc, eclass sortpreserve
 
 	local tied_val 0
 	if `use_rust' == 1 {
+		if `has_cluster' == 1 {
+			foreach tmp_svar of local slist {
+				tempvar unique_coords_tag unique_coords_num
+				qui egen `unique_coords_tag' = tag(`e(clustvar)' `tmp_svar') if e(sample)
+				qui egen `unique_coords_num' = total(`unique_coords_tag') if e(sample), by(`e(clustvar)')
+				qui sum `unique_coords_num' if e(sample)
+				if (r(min) != 1 | r(max) != 1) {
+					noi disp as text "coordinates not constant within clusters; aborting"
+					exit(999)
+				}
+			}
+			tempvar es
+			qui gen byte `es' = 0 if e(sample)
+			sort `e(clustvar)' `es'
+		}
+
 		local score_vars ""
 		forvalues j = 1/`p' {
 			tempvar score_`j'
@@ -1360,24 +1498,50 @@ program scpc, eclass sortpreserve
 		local uncond_flag = ("`uncond'" != "")
 		local cvs_flag = ("`cvs'" != "")
 		local plugin_vars "`slist' `score_vars'"
+		if `has_cluster' == 1 {
+			tempvar cl_idx
+			qui gen double `cl_idx' = sum(`scpc_sel') if e(sample)
+			local plugin_vars "`plugin_vars' `cl_idx'"
+			local plugin_cond "e(sample)"
+		}
+		else {
+			local plugin_cond "`scpc_sel' == 1"
+		}
 		if `uncond_flag' == 0 {
 			local plugin_vars "`plugin_vars' `xvars'"
+			if `n_endog' > 0 & `n_z_excl' > 0 {
+				local plugin_vars "`plugin_vars' `z_excl_vars'"
+			}
 		}
 
 		local avc_arg = trim("`: display %21.16g `avc''")
-		plugin call _scpc_rust_plugin `plugin_vars' if `scpc_sel' == 1, ///
-			exact_scpc `d' `p' `k_use' `has_cons' "`avc_arg'" `latlong_flag' `uncond_flag' `cvs_flag' "`nthreads'" ///
-			"`b_full'" "`bread_full'" "`scpctab'" "`cvs_arg'" "`c0_scal'" "`cv_scal'" "`q_scal'" "`tied_scal'"
+		if `approx_mode' == 1 {
+			plugin call _scpc_rust_plugin `plugin_vars' if `plugin_cond', ///
+				approx_scpc `d' `p' `k_use' `has_cons' "`avc_arg'" `latlong_flag' `uncond_flag' `cvs_flag' "`nthreads'" ///
+				"`b_full'" "`bread_full'" "`scpctab'" "`cvs_arg'" "`c0_scal'" "`cv_scal'" "`q_scal'" "`tied_scal'" `has_cluster' `n_endog' `n_z_excl' "`seed_arg'"
+		}
+		else {
+			plugin call _scpc_rust_plugin `plugin_vars' if `plugin_cond', ///
+				exact_scpc `d' `p' `k_use' `has_cons' "`avc_arg'" `latlong_flag' `uncond_flag' `cvs_flag' "`nthreads'" ///
+				"`b_full'" "`bread_full'" "`scpctab'" "`cvs_arg'" "`c0_scal'" "`cv_scal'" "`q_scal'" "`tied_scal'" `has_cluster' `n_endog' `n_z_excl'
+		}
 
 		if "`req_backend'" == "auto" & scalar(`tied_scal') == 1 {
 			local use_rust 0
 			drop `score_vars' `scpc_sel'
+			if `has_cluster' == 1 {
+				capture drop `cl_idx' `es'
+			}
 			capture matrix drop `b_sub' `scpctab' `scpc_cvs'
 			capture scalar drop `c0_scal' `cv_scal' `q_scal' `tied_scal'
 		}
+		else if "`req_backend'" == "rust" & `approx_mode' == 1 & scalar(`tied_scal') == 1 {
+			di as error "tied eigenspace in Nystrom approximation"
+			exit 198
+		}
 		else {
 			local k `k_use'
-			di as text "found " %6.0f `n_active' " observations / clusters and " %3.0f `d' "-dimensional locations in s_*"
+			di as text "found " %6.0f `n_sites' " observations / clusters and " %3.0f `d' "-dimensional locations in s_*"
 			if `latlong_flag' == 0 {
 				di as text "using Euclidan norm to compute distance between locations stored in s_*"
 			}
@@ -1428,6 +1592,7 @@ program scpc, eclass sortpreserve
 		}
 		tempvar scpc_sel
 		scpc_setscores, scpc_sel(`scpc_sel') score_vars("`score_vars'") bread(`scpc_Bread')
+		mata set_method_opts(`approx_mode', `seed')
 		mata setOmsWfin(`avc',"`scpc_sel'","`latlong'")
 		
 		qui sum `scpc_sel', detail
@@ -1470,11 +1635,16 @@ program scpc, eclass sortpreserve
 			qui replace `ess'=1 if e(sample)
 			_estimates hold `oreg_hold', restore
 			local clist 
+			local has_cons_iv : list posof "_cons" in na
+			local reg_cons_opt ""
+			if `has_cons_iv' == 0 {
+				local reg_cons_opt ", noconstant"
+			}
 			tokenize `na'
 			forval j = 1/`= colsof(`b_mat')' {
 				if(`j'<`i'){			
 					tempvar fs_`j'
-					qui reg ``j'' `elist' if `ess'
+					qui reg ``j'' `elist' if `ess'`reg_cons_opt'
 					qui predict double `fs_`j'', xb
 					qui replace `fs_`j''=. if !`ess'
 					local clist `clist' `fs_`j''
@@ -1485,7 +1655,7 @@ program scpc, eclass sortpreserve
 			}
 			matrix colnames `scpc_Bread0' = `clist'
 			_estimates unhold `oreg_hold'		
-			local clist="qui ivregress 2sls `rx_var' `e(exogr)' (`e(instd)' = `e(insts)' )"	
+			local clist="qui ivregress 2sls `rx_var' `e(exogr)' (`e(instd)' = `e(insts)' )`reg_cons_opt'"
 		}
 		else if("`uncond'"==""){
 			disp as text "conditional critical values only supported for ivregress 2sls and regress, use option uncond for only unconditionally valid critical values; aborting"
@@ -1567,6 +1737,8 @@ program scpc, eclass sortpreserve
 	ereturn scalar c0 = `c0_val'
 	ereturn scalar cv = `cv_val'
 	ereturn scalar tied = `tied_val'
+	ereturn scalar seed = `seed'
+	ereturn local method "`method_used'"
 	ereturn local backend "`backend_used'"
 end
 

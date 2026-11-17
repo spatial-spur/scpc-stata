@@ -48,4 +48,16 @@ quietly scpc, avc(.5) k(1) cvs backend(fallback)
 matrix cv = e(scpccvs)
 assert abs(cv[1,3] - 9.902023) < .002
 
+quietly regress y x, vce(cluster s_1)
+quietly scpc, avc(.5) k(1) cvs backend(rust)
+assert "`e(backend)'" == "rust"
+matrix cv = e(scpccvs)
+assert abs(cv[1,3] - 17.380977) < .002
+
+quietly regress y x, vce(cluster s_1) noconstant
+quietly scpc, avc(.5) k(1) cvs backend(rust)
+assert "`e(backend)'" == "rust"
+matrix cv = e(scpccvs)
+assert abs(cv[1,3] - 9.902023) < .002
+
 display "Conditional OLS cutoff tests passed."

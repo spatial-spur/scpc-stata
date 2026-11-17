@@ -8,11 +8,13 @@ adopath ++ "`repo_root'/scpc-stata/src"
 // Helper to compare Rust vs Fallback outputs within 1e-10
 capture program drop check_rust_vs_fallback
 program define check_rust_vs_fallback
-    syntax , [cvs latlong uncond k(real 10) avc(real 0.03)]
-    local opts "avc(`avc') k(`k')"
+    syntax , [cvs latlong uncond exact approx seed(real 1) k(real 10) avc(real 0.03)]
+    local opts "avc(`avc') k(`k') seed(`seed')"
     if "`cvs'" != "" local opts "`opts' cvs"
     if "`latlong'" != "" local opts "`opts' latlong"
     if "`uncond'" != "" local opts "`opts' uncond"
+    if "`exact'" != "" local opts "`opts' exact"
+    if "`approx'" != "" local opts "`opts' approx"
 
     scpc, `opts' backend(rust)
     assert "`e(backend)'" == "rust"
@@ -227,25 +229,66 @@ global SPATIAL_BACKEND ""
 // Test 7: Fallback and backend(rust) rejection on unsupported M1 cases
 // =========================================================================
 di as text "=== Test 7: Unsupported Milestone 1 cases ==="
-// 7a: Clustered OLS (use cluster-constant coordinates s_1_clustered, s_2_clustered)
+// 7a: Clustered OLS now runs natively on Rust (unconditional & conditional, Euclidean & latlong)
 import delimited "`repo_root'/verification/data/bench_200.csv", clear
 drop s_1 s_2
 rename s_1_clustered s_1
 rename s_2_clustered s_2
 regress y x1 x2, cluster(cluster_id)
 scpc, uncond
-assert "`e(backend)'" == "fallback"
-capture scpc, uncond backend(rust)
-assert _rc == 198
+assert "`e(backend)'" == "rust"
+check_rust_vs_fallback, uncond cvs
+check_rust_vs_fallback, cvs
+check_rust_vs_fallback, latlong cvs
+regress y x1 x2, cluster(cluster_id) noconstant
+check_rust_vs_fallback, cvs
 
-// 7b: ivregress 2sls
+// 7b: ivregress 2sls now runs natively on Rust (unclustered & clustered, cond & uncond)
 import delimited "`repo_root'/verification/data/bench_200.csv", clear
 drop s_1_clustered s_2_clustered
 ivregress 2sls y x2 (x1 = z1), robust
 scpc
-assert "`e(backend)'" == "fallback"
+assert "`e(backend)'" == "rust"
+check_rust_vs_fallback, cvs
+check_rust_vs_fallback, uncond cvs
+check_rust_vs_fallback, latlong cvs
+ivregress 2sls y x2 (x1 = z1), noconstant robust
+check_rust_vs_fallback, cvs
+
+// 7b2: Overidentified IV and clustered IV
+gen double z2 = z1 * 0.7 + 0.3 * sin(_n)
+ivregress 2sls y x2 (x1 = z1 z2), robust
+check_rust_vs_fallback, cvs
+
+import delimited "`repo_root'/verification/data/bench_200.csv", clear
+drop s_1 s_2
+rename s_1_clustered s_1
+rename s_2_clustered s_2
+ivregress 2sls y x2 (x1 = z1), cluster(cluster_id)
+scpc
+assert "`e(backend)'" == "rust"
+check_rust_vs_fallback, cvs
+check_rust_vs_fallback, uncond cvs
+check_rust_vs_fallback, latlong cvs
+
+// 7b3: clustered areg with uncond runs on Rust (and conditional areg aborts)
+areg y x1 x2, absorb(cluster_id) cluster(cluster_id)
+scpc, uncond
+assert "`e(backend)'" == "rust"
+check_rust_vs_fallback, uncond cvs
+
+// Re-load unclustered bench_200 for unclustered areg + subsequent 7c check
+import delimited "`repo_root'/verification/data/bench_200.csv", clear
+drop s_1_clustered s_2_clustered
+areg y x1 x2, absorb(cluster_id) robust
+scpc, uncond
+assert "`e(backend)'" == "rust"
+check_rust_vs_fallback, uncond cvs
+check_rust_vs_fallback, uncond latlong cvs
 capture scpc, backend(rust)
 assert _rc == 198
+capture scpc
+assert _rc == 999
 
 // 7c: Omitted/collinear e(b) drop (backend(rust) rejects; master Mata getcv() loops on zero-variance omitted var)
 gen x_col = 2 * x1
@@ -253,16 +296,18 @@ regress y x1 x2 x_col, robust
 capture scpc, backend(rust)
 assert _rc == 198
 
-// 7d: Active sample >= 4500
+// 7d: Active sample >= 4500 now runs approx natively on Rust (exact requires exact option)
 clear
+set seed 7045
 set obs 4500
-gen y = rnormal()
-gen x1 = rnormal()
-gen s_1 = rnormal()
-gen s_2 = rnormal()
+gen double y = rnormal()
+gen double x1 = rnormal()
+gen double s_1 = runiform()
+gen double s_2 = runiform()
 regress y x1, robust
-capture scpc, backend(rust)
-assert _rc == 198
+scpc, backend(rust)
+assert "`e(backend)'" == "rust"
+assert "`e(method)'" == "approx"
 
 // 7e: Invalid option arguments
 capture scpc, backend(bogus)
@@ -292,11 +337,13 @@ adopath ++ "`repo_root'/scpc-stata/src"
 // Re-define check_rust_vs_fallback after Test 7f's clear all
 capture program drop check_rust_vs_fallback
 program define check_rust_vs_fallback
-    syntax , [cvs latlong uncond k(real 10) avc(real 0.03)]
-    local opts "avc(`avc') k(`k')"
+    syntax , [cvs latlong uncond exact approx seed(real 1) k(real 10) avc(real 0.03)]
+    local opts "avc(`avc') k(`k') seed(`seed')"
     if "`cvs'" != "" local opts "`opts' cvs"
     if "`latlong'" != "" local opts "`opts' latlong"
     if "`uncond'" != "" local opts "`opts' uncond"
+    if "`exact'" != "" local opts "`opts' exact"
+    if "`approx'" != "" local opts "`opts' approx"
 
     scpc, `opts' backend(rust)
     assert "`e(backend)'" == "rust"
@@ -496,6 +543,18 @@ scpc, cvs backend(fallback)
 assert "`e(backend)'" == "fallback"
 confirm matrix e(scpccvs)
 assert rowsof(e(scpccvs)) == 3 & colsof(e(scpccvs)) == 4
+assert_user_state_preserved, exp_vars("`cl_vars'") exp_cmd("regress") exp_depvar("y") exp_n(200) exp_samp(`samp_cl')
+
+scpc, cvs backend(rust)
+assert "`e(backend)'" == "rust"
+confirm matrix e(scpccvs)
+assert rowsof(e(scpccvs)) == 3 & colsof(e(scpccvs)) == 4
+assert_user_state_preserved, exp_vars("`cl_vars'") exp_cmd("regress") exp_depvar("y") exp_n(200) exp_samp(`samp_cl')
+
+scpc, backend(rust)
+assert "`e(backend)'" == "rust"
+capture confirm matrix e(scpccvs)
+assert _rc != 0
 assert_user_state_preserved, exp_vars("`cl_vars'") exp_cmd("regress") exp_depvar("y") exp_n(200) exp_samp(`samp_cl')
 
 scpc, backend(fallback)
@@ -779,4 +838,113 @@ assert "`e(backend)'" == "rust"
 assert e(tied) == 0
 restore
 
-di as text "ALL MILESTONE 1 STATA TESTS PASSED!"
+// Logit still rejects on Rust and aborts on conditional fallback
+gen byte y_bin = (y > 0)
+logit y_bin x1 x2, robust
+capture scpc, backend(rust)
+assert _rc == 198
+capture scpc
+assert _rc == 999
+
+// Milestone 2 Step 2.3B: Nystrom approx SCPC, threshold overrides, and tied fallback
+import delimited "`repo_root'/verification/data/bench_200.csv", clear
+rename s_1_clustered cl_s1
+rename s_2_clustered cl_s2
+
+// Euclidean and latlong Nystrom OLS (conditional & unconditional) + nthreads invariance
+regress y x1 x2, robust
+check_rust_vs_fallback, avc(0.05) approx seed(7) cvs
+assert "`e(method)'" == "approx"
+assert e(seed) == 7
+check_rust_vs_fallback, avc(0.05) approx seed(7) uncond cvs
+assert "`e(method)'" == "approx"
+check_rust_vs_fallback, avc(0.05) approx seed(7) latlong cvs
+assert "`e(method)'" == "approx"
+check_rust_vs_fallback, avc(0.05) approx seed(7) latlong uncond cvs
+
+// Thread-count invariance (nthreads(1) vs nthreads(2)) under approx
+scpc, avc(0.05) approx seed(7) cvs backend(rust) nthreads(1)
+assert "`e(backend)'" == "rust"
+assert "`e(method)'" == "approx"
+tempname a1_stats a1_cvs d_th_s d_th_c
+matrix `a1_stats' = e(scpcstats)
+matrix `a1_cvs' = e(scpccvs)
+scpc, avc(0.05) approx seed(7) cvs backend(rust) nthreads(2)
+mata: st_numscalar("`d_th_s'", max(abs(st_matrix("e(scpcstats)") - st_matrix("`a1_stats'"))))
+mata: st_numscalar("`d_th_c'", max(abs(st_matrix("e(scpccvs)") - st_matrix("`a1_cvs'"))))
+assert scalar(`d_th_s') < 1e-12
+assert scalar(`d_th_c') < 1e-12
+
+// Seed validation and mutually exclusive exact/approx options
+capture scpc, exact approx
+assert _rc == 198
+capture scpc, approx seed(-1)
+assert _rc == 198
+
+// Clustered Nystrom OLS and IV (conditional & unconditional)
+regress y x1 x2, vce(cluster cluster_id)
+preserve
+drop s_1 s_2
+rename cl_s1 s_1
+rename cl_s2 s_2
+check_rust_vs_fallback, avc(0.05) approx seed(3) cvs
+check_rust_vs_fallback, avc(0.05) approx seed(3) uncond cvs
+restore
+
+// Synthetic IV with approx (unclustered and clustered)
+clear
+set seed 2029
+set obs 96
+gen double s_1 = runiform()
+gen double s_2 = runiform()
+gen int cl = ceil(_n / 4)
+bysort cl: replace s_1 = s_1[1]
+bysort cl: replace s_2 = s_2[1]
+gen double z = rnormal()
+gen double w = rnormal()
+gen double u = rnormal()
+gen double x = 0.85 * z + 0.3 * w + 0.5 * u
+gen double y = 1.0 + 1.2 * x + 0.45 * w + u
+ivregress 2sls y w (x = z), vce(cluster cl)
+check_rust_vs_fallback, avc(0.1) approx seed(3) cvs
+check_rust_vs_fallback, avc(0.1) approx seed(3) uncond cvs
+
+// Unclustered IV with approx (different coords per obs)
+replace s_1 = s_1 + 0.02 * rnormal()
+replace s_2 = s_2 + 0.02 * rnormal()
+ivregress 2sls y w (x = z), robust
+check_rust_vs_fallback, avc(0.1) approx seed(3) cvs
+check_rust_vs_fallback, avc(0.1) approx seed(3) uncond cvs
+
+// Full-rank symmetric 20-gon triggers approx tied eigenspace: errors in rust, falls back in auto
+clear
+set seed 2030
+set obs 20
+gen double s_1 = cos(2 * _pi * (_n - 1) / _N)
+gen double s_2 = sin(2 * _pi * (_n - 1) / _N)
+gen double x = rnormal()
+gen double y = 1 + x + rnormal()
+regress y x, robust
+capture scpc, avc(0.5) approx backend(rust)
+assert _rc == 198
+scpc, avc(0.5) approx backend(auto)
+assert "`e(backend)'" == "fallback"
+assert "`e(method)'" == "approx"
+
+// N = 4500 threshold: default auto uses approx, explicit exact overrides threshold
+clear
+set seed 2031
+set obs 4500
+gen double s_1 = runiform()
+gen double s_2 = runiform()
+gen double x = rnormal()
+gen double y = 0.5 + 1.2 * x + 0.5 * rnormal()
+regress y x, robust
+scpc, backend(rust)
+assert "`e(backend)'" == "rust"
+assert "`e(method)'" == "approx"
+scpc, exact backend(rust)
+assert "`e(backend)'" == "rust"
+assert "`e(method)'" == "exact"
+
+di as text "ALL MILESTONE 1 & 2 STATA TESTS PASSED!"
