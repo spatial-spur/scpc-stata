@@ -1,7 +1,14 @@
-* Run from src so Stata loads scpc.ado from this checkout.
+* Run from the shared workspace root or pass its path as the first argument.
 clear all
 set more off
+version 14
+args repo_root
+if `"`repo_root'"' == "" local repo_root "."
+capture confirm file "`repo_root'/scpc-stata/src/scpc.ado"
+if _rc == 0 adopath ++ "`repo_root'/scpc-stata/src"
 which scpc
+quietly findfile scpc.ado
+local scpc_source `"`r(fn)'"'
 
 input s_1 x
 0 -1
@@ -51,6 +58,61 @@ foreach cons in constant noconstant {
     mata: assert(max(abs(st_matrix("fallback_cv") - st_matrix("native_cv"))) < 1e-8)
 }
 
+* Changing units of a regressor must not change the 2SLS cutoff.
+generate double scaled_x = 1e-8 * x
+quietly ivregress 2sls y (scaled_x = z), vce(robust)
+foreach backend in rust fallback {
+    quietly scpc, avc(.5) k(1) cvs backend(`backend')
+    matrix cv = e(scpccvs)
+    assert abs(cv[1,3] - 17.432446) < .002
+}
+
+* Check public parity at a condition number Stata's 2SLS fit still accepts.
+preserve
+clear
+set obs 8
+generate double s_1 = _n - 1
+generate double w = (_n == 1) + 0.1 * (_n == 4)
+generate double z2 = (_n == 2) + 0.1 * (_n == 5)
+generate double x2 = w + 1e-4 * z2 + 0.5 * (_n == 3)
+generate double y = w + 2 * x2 + 0.3 * sin(_n * 1.3)
+quietly ivregress 2sls y w (x2 = z2), vce(robust) noconstant
+assert e(rank) == 2
+quietly scpc, avc(.5) k(2) cvs backend(rust)
+assert "`e(backend)'" == "rust"
+matrix ill_rs = e(scpcstats)
+matrix ill_rc = e(scpccvs)
+quietly scpc, avc(.5) k(2) cvs backend(fallback)
+assert "`e(backend)'" == "fallback"
+matrix ill_fs = e(scpcstats)
+matrix ill_fc = e(scpccvs)
+mata: assert(max(abs(st_matrix("ill_rc") - st_matrix("ill_fc"))) < 1e-10)
+mata: assert(max(abs(st_matrix("ill_rs") - st_matrix("ill_fs")) :/ (1 :+ abs(st_matrix("ill_fs")))) < 5e-8)
+restore
+
+* Zero unclustered score sign follows >= 0 -> +1 on both Rust and Mata backends.
+preserve
+clear
+input double s_1 double x double y
+0 -2 -3
+1 -1 -1
+2  0  2
+3  1  1
+4  2  1
+end
+quietly regress y x, vce(robust)
+quietly scpc, avc(.5) k(1) cvs backend(rust)
+assert "`e(backend)'" == "rust"
+matrix zs_r = e(scpcstats)
+matrix zs_rcvs = e(scpccvs)
+quietly scpc, avc(.5) k(1) cvs backend(fallback)
+assert "`e(backend)'" == "fallback"
+matrix zs_f = e(scpcstats)
+matrix zs_fcvs = e(scpccvs)
+mata: assert(max(abs(st_matrix("zs_r") - st_matrix("zs_f"))) < 1e-10)
+mata: assert(max(abs(st_matrix("zs_rcvs") - st_matrix("zs_fcvs"))) < 1e-10)
+restore
+
 expand 2
 bysort s_1: replace x = x + cond(_n == 1, -.25, .25)
 replace y = x + (s_1 == 0)
@@ -87,5 +149,103 @@ quietly scpc, avc(.5) k(1) cvs backend(rust)
 assert "`e(backend)'" == "rust"
 matrix cv = e(scpccvs)
 assert abs(cv[1,3] - 9.902023) < .002
+
+* Invalid sampled covariance is an error even in auto (uncond and cond). Exact stays available.
+clear
+set obs 8
+generate double s_1 = _n - 1
+generate double s_2 = sin(s_1)
+generate double x = cos(2 * s_1)
+generate double y = cos(s_1) + 0.5 * x
+quietly regress y, robust
+foreach backend in rust auto fallback {
+    capture noisily scpc, approx avc(.95) uncond backend(`backend')
+    assert _rc == 198
+    quietly scpc, exact avc(.95) uncond backend(`backend')
+    assert "`e(method)'" == "exact"
+}
+quietly regress y x, robust
+foreach backend in rust auto fallback {
+    capture noisily scpc, approx avc(.95) backend(`backend')
+    assert _rc == 198
+}
+
+* Coordinates and cluster representatives come from the fitted sample only.
+clear
+set seed 23
+set obs 30
+generate cl = ceil(_n / 3)
+generate byte selected = mod(_n - 1, 3) != 0
+generate double s_1 = cond(selected, cl, -9999)
+generate double s_2 = cos(cl)
+generate double x = rnormal()
+generate double y = x + rnormal()
+quietly regress y x if selected, vce(cluster cl)
+quietly scpc, latlong cvs backend(rust)
+matrix native_cv = e(scpccvs)
+quietly scpc, latlong cvs backend(fallback)
+matrix fallback_cv = e(scpccvs)
+mata: assert(max(abs(st_matrix("fallback_cv") - st_matrix("native_cv"))) < 1e-8)
+replace s_2 = 170 in 2
+foreach backend in rust auto fallback {
+    capture noisily scpc, latlong backend(`backend')
+    assert _rc == 999
+}
+replace s_1 = 91 in 2
+foreach backend in rust auto fallback {
+    capture noisily scpc, latlong backend(`backend')
+    assert _rc == 198
+}
+
+* Regression weights have no SCPC profile on either backend.
+generate double w = 1 + mod(_n, 2)
+quietly regress y x [aw=w] if selected, vce(robust)
+foreach backend in rust auto fallback {
+    capture noisily scpc, uncond backend(`backend')
+    assert _rc == 198
+}
+
+* The conditional projection is defined for 2SLS. Preserve unconditional LIML.
+clear
+set seed 958
+set obs 30
+generate double s_1 = _n
+generate double z1 = rnormal()
+generate double z2 = rnormal()
+generate double u = rnormal()
+generate double x = z1 + z2 + u
+generate double y = x + u + rnormal()
+quietly ivregress liml y (x = z1 z2), vce(robust)
+foreach backend in rust auto fallback {
+    capture noisily scpc, backend(`backend')
+    assert _rc == 198
+}
+quietly scpc, uncond backend(fallback)
+assert "`e(backend)'" == "fallback"
+
+* Load the Mata definitions directly to exercise conditioning beyond the
+* range where Stata's 2SLS fit keeps both columns.
+clear all
+quietly do `"`scpc_source'"'
+mata:
+    Q = (.5, .5, .5 \ .5, -.5, .5 \ .5, .5, -.5 \ .5, -.5, -.5)
+    Z = Q[., 1..2]
+    X = Q[., 1], Q[., 1] + 1e-7 * Q[., 2] + Q[., 3]
+    V = scpc_iv_projector(X, Z)
+    assert(max(abs(cross(X, V) - I(2))) < 1e-8)
+    assert(max(abs(cross(Q[., 3], V))) < 1e-8)
+    X = Q[., 1], Q[., 3] + 1e-13 * Q[., 2]
+end
+capture mata: scpc_iv_projector(X, Z)
+assert _rc == 999
+
+* Redundant and zero instrument columns can make the instrument matrix wide.
+mata:
+    Q = I(4)
+    Z = 1e-150 * Q[., 1], 1e150 * Q[., 2], Q[., 1], Q[., 2], J(4, 1, 0)
+    X = Q[., 1], Q[., 2] + .5 * Q[., 3]
+    V = scpc_iv_projector(X, Z)
+    assert(max(abs(cross(X, V) - I(2))) < 1e-10)
+end
 
 display "Conditional OLS cutoff tests passed."

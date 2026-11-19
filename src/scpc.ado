@@ -1,7 +1,6 @@
 
 
 set matastrict on
-mata mata clear
 mata 
 
 real scalar getavc(real scalar c, real vector dist)
@@ -14,18 +13,36 @@ real scalar getavc(real scalar c, real vector dist)
 	return(length(d_act) > 0 ? sum(exp(-c * d_act)) / length(dist) : 0)
 }	
 
-real matrix getdistmat(real matrix s)
+real colvector scpc_euclidean_row_norm(real matrix differences)
+// Scale before squaring to avoid overflowing or underflowing finite distances.
+{
+	real colvector scale, distance
+	if (hasmissing(differences)) {
+		errprintf("pairwise coordinate differences exceed the numeric range\n")
+		exit(198)
+	}
+	scale = rowmax(abs(differences))
+	scale = scale :+ (scale :== 0)
+	distance = scale :* sqrt(rowsum((differences :/ scale):^2))
+	if (hasmissing(distance)) {
+		errprintf("pairwise distances exceed the numeric range\n")
+		exit(198)
+	}
+	return(distance)
+}
+
+real matrix scpc_getdistmat(real matrix s)
 // computes matrix of distances from locations
-// if external latlongflag=0, distances computed as norm, otherwise latitude / longitude and haversine formula for sphere with radius 1/Pi
+// if external scpc_latlongflag=0, distances computed as norm, otherwise latitude / longitude and haversine formula for sphere with radius 1/Pi
 {	
-	external real scalar latlongflag
+	external real scalar scpc_latlongflag
 	real matrix mat, d, rad
 	real scalar n, i, c
 	n=rows(s)
 	mat=J(n,n,0)
-	if(latlongflag==0){
+	if(scpc_latlongflag==0){
 		for(i=1;i<=n;i++){
-			mat[.,i]=sqrt(rowsum((s:-s[i,.]):^2))
+			mat[.,i]=scpc_euclidean_row_norm(s :- s[i,.])
 		}
 	}
 	else
@@ -43,7 +60,7 @@ real matrix getdistmat(real matrix s)
 	return(mat)
 }	
 
-real vector lvech(real matrix mat)
+real vector scpc_lvech(real matrix mat)
 // takes lower triangular part of matrix and puts it into vector
 {
 	real scalar i,c
@@ -57,7 +74,7 @@ real vector lvech(real matrix mat)
 	return(v)
 }	
 
-real matrix demeanmat(real matrix mat)
+real matrix scpc_demeanmat(real matrix mat)
 // demeans matrix
 {
 	mat=mat:-(rowsum(mat)/cols(mat))
@@ -243,21 +260,21 @@ real scalar getc0fromavc(real vector dist,real scalar avc0)
 }
 
 real matrix getW(real matrix distmat, real scalar c0)
-// computes first qmax eigenvectors of demeaned Sigma(c0) and stores them in W, along with column vector of ones
+// computes first scpc_qmax eigenvectors of demeaned Sigma(c0) and stores them in W, along with column vector of ones
 // all columns of W are normalized to length 1
 {
-	external real scalar qmax
+	external real scalar scpc_qmax
 	real vector	evals
 	real matrix W
 
-	W=J(rows(distmat),qmax,1)
-	evals=(1::qmax)
-	symeigensystemselecti(demeanmat(exp(-c0*distmat)),(1,qmax),W,evals)
+	W=J(rows(distmat),scpc_qmax,1)
+	evals=(1::scpc_qmax)
+	symeigensystemselecti(scpc_demeanmat(exp(-c0*distmat)),(1,scpc_qmax),W,evals)
 	W=(J(rows(distmat),1,1/sqrt(rows(distmat))),W)
 	return(W)
 }
 
-struct mats{
+struct scpc_mats{
 // helper struct for vector of matrices Oms
 		real matrix mat
 }
@@ -266,13 +283,13 @@ real scalar scpc_rp_panel(real rowvector evals, real rowvector logs,
                           real scalar scale, real scalar is_comp,
                           real scalar lo, real scalar hi)
 {
-	external real matrix GQxw
+	external real matrix scpc_GQxw
 	real scalar width, j, r, m, log_cos, s_log, xj, term
 	real colvector theta, s_th, c_th, sin2, cos2, denom, prod_v, deficit, vals, extra, inv
 	real rowvector x_row
 
 	width = hi - lo
-	theta = lo :+ width * GQxw[., 1]
+	theta = lo :+ width * scpc_GQxw[., 1]
 	s_th = sin(theta)
 	c_th = cos(theta)
 	sin2 = s_th :* s_th
@@ -326,7 +343,7 @@ real scalar scpc_rp_panel(real rowvector evals, real rowvector logs,
 			}
 		}
 	}
-	return(width * sum(GQxw[., 2] :* vals))
+	return(width * sum(scpc_GQxw[., 2] :* vals))
 }
 
 real scalar scpc_rp_adaptive(real rowvector evals, real rowvector logs,
@@ -350,12 +367,12 @@ real scalar scpc_rp_adaptive(real rowvector evals, real rowvector logs,
 real scalar getrp(real matrix Om, real scalar cv)
 {
 // computes rejection probability given Om and cv; cv here is cv/sqrt(q) in notation of paper
-	external real matrix GQxw
+	external real matrix scpc_GQxw
 	real rowvector vals, evals, logs
 	real matrix Omx
 	real scalar positive, scale, half_pi, whole, tol, prob
 
-	if (rows(GQxw) == 0) setGQxw()
+	if (rows(scpc_GQxw) == 0) setGQxw()
 	if (cv >= .) return(0)
 	if (cv <= 0) return(1)
 	if (cv > 1) {
@@ -393,7 +410,7 @@ real scalar getrp(real matrix Om, real scalar cv)
 	return(prob)
 }
 
-real scalar maxrp(struct mats vector Oms, real scalar q, real scalar cv)
+real scalar maxrp(struct scpc_mats vector Oms, real scalar q, real scalar cv)
 {
 // computes largest rejection probability given vector of Om matrices stored in Oms given q and cv
 	real scalar i, val
@@ -404,7 +421,7 @@ real scalar maxrp(struct mats vector Oms, real scalar q, real scalar cv)
 	return(val)
 }
 
-real scalar getcv(struct mats vector Oms, real scalar q, real scalar level)
+real scalar getcv(struct scpc_mats vector Oms, real scalar q, real scalar level)
 // computes (two-sided) critical value from q and Oms of given level
 {
 	real scalar active, j, outer, iter, step, tol, cv0, cv1, mid, rp
@@ -465,17 +482,17 @@ real scalar getcv(struct mats vector Oms, real scalar q, real scalar level)
 	return(cv1 * sqrt(q))
 }
 
-void setfinalW(struct mats vector Oms, real matrix W, real scalar cv)
+void setfinalW(struct scpc_mats vector Oms, real matrix W, real scalar cv)
 // solves for optimal q and cv from Oms, stores results in W and cv
 {
-	external real scalar qmax
+	external real scalar scpc_qmax
 	real scalar q
 	real vector cvs,lengths,qvec
 	real matrix kmat
 	
-	lengths=(1::qmax)
+	lengths=(1::scpc_qmax)
 	cvs=lengths
-	for(q=1;q<=qmax;q++){
+	for(q=1;q<=scpc_qmax;q++){
 		cvs[q]=getcv(Oms,q,0.05)
 		lengths[q]=cvs[q]*gamma(.5*(q+1))/(sqrt(q)*gamma(.5*q))
 	} 
@@ -488,23 +505,23 @@ void setfinalW(struct mats vector Oms, real matrix W, real scalar cv)
 real scalar getnc(real scalar c0, real scalar cmax)
 // computes number of c-values in grid so that largest c is at least cmax
 {
-	external real scalar cgridfac
-	return(max((2,ceil(log(cmax/c0)/log(cgridfac)))))
+	external real scalar scpc_cgridfac
+	return(max((2,ceil(log(cmax/c0)/log(scpc_cgridfac)))))
 }
 
-struct mats vector getOms(real matrix distmat, real scalar c0, real scalar cmax, real matrix W)
-// computes vector of qmax x qmax Om(c) matrices from distmat, c0 and W
+struct scpc_mats vector getOms(real matrix distmat, real scalar c0, real scalar cmax, real matrix W)
+// computes vector of scpc_qmax x scpc_qmax Om(c) matrices from distmat, c0 and W
 {
-	external real scalar cgridfac
-	struct mats vector Oms
+	external real scalar scpc_cgridfac
+	struct scpc_mats vector Oms
 	real scalar i, c
 	
 	
-	Oms=mats(getnc(c0,cmax))
+	Oms=scpc_mats(getnc(c0,cmax))
 	c=c0
 	for(i=1;i<=length(Oms);i++){	
 		Oms[i].mat=cross(W,exp(-c*distmat))*W 
-		c=c*cgridfac			
+		c=c*scpc_cgridfac
 	}
 	return(Oms)
 }
@@ -519,8 +536,8 @@ real scalar gettau(real vector y, real matrix W)
 void setGQxw()
 {
 // sets 40-point Gauss-Legendre quadrature nodes and weights on [0, 1]
-	external real matrix GQxw
-	GQxw=(  0.0008811451447203744,  0.004636880650271513,  0.01137002500811285,  0.02104159039310416,  0.03359359586066174,  0.04895059651556283,  0.06702024839387027,  0.08769388458334415,  0.11084717428674029,  0.13634087240503645,  0.16402165769291022,  0.1937230551660099,  0.2252664374524359,  0.25846209915691065,  0.2931103978141975,  0.32900295458712076,  0.36592390749637316,  0.40365120964931445,  0.4419579646623724,  0.48061379124697456,  0.5193862087530254,  0.5580420353376276,  0.5963487903506856,  0.6340760925036268,  0.6709970454128793,  0.7068896021858024,  0.7415379008430893,  0.7747335625475641,  0.8062769448339902,  0.8359783423070898,  0.8636591275949635,  0.8891528257132597,  0.9123061154166558,  0.9329797516061298,  0.9510494034844372,  0.9664064041393383,  0.9789584096068958,  0.9886299749918872,  0.9953631193497285,  0.9991188548552796 \ 0.0022606385492667702,  0.005249142265577026,  0.008210529190953473,  0.011122924597083375,  0.013968503490011764,  0.016730097641273825,  0.019391083987236147,  0.0219354540928367,  0.024347903817536057,  0.026613923491968422,  0.02871988454969573,  0.030653121246464486,  0.0324020067283005,  0.0339560229076169,  0.03530582369564337,  0.036443291197901954,  0.03736158452898409,  0.03805518095031309,  0.03851990908212394,  0.038752973989212375,  0.038752973989212375,  0.03851990908212394,  0.03805518095031309,  0.03736158452898409,  0.036443291197901954,  0.03530582369564337,  0.0339560229076169,  0.0324020067283005,  0.030653121246464486,  0.02871988454969573,  0.026613923491968422,  0.024347903817536057,  0.0219354540928367,  0.019391083987236147,  0.016730097641273825,  0.013968503490011764,  0.011122924597083375,  0.008210529190953473,  0.005249142265577026,  0.0022606385492667702)'
+	external real matrix scpc_GQxw
+	scpc_GQxw=(  0.0008811451447203744,  0.004636880650271513,  0.01137002500811285,  0.02104159039310416,  0.03359359586066174,  0.04895059651556283,  0.06702024839387027,  0.08769388458334415,  0.11084717428674029,  0.13634087240503645,  0.16402165769291022,  0.1937230551660099,  0.2252664374524359,  0.25846209915691065,  0.2931103978141975,  0.32900295458712076,  0.36592390749637316,  0.40365120964931445,  0.4419579646623724,  0.48061379124697456,  0.5193862087530254,  0.5580420353376276,  0.5963487903506856,  0.6340760925036268,  0.6709970454128793,  0.7068896021858024,  0.7415379008430893,  0.7747335625475641,  0.8062769448339902,  0.8359783423070898,  0.8636591275949635,  0.8891528257132597,  0.9123061154166558,  0.9329797516061298,  0.9510494034844372,  0.9664064041393383,  0.9789584096068958,  0.9886299749918872,  0.9953631193497285,  0.9991188548552796 \ 0.0022606385492667702,  0.005249142265577026,  0.008210529190953473,  0.011122924597083375,  0.013968503490011764,  0.016730097641273825,  0.019391083987236147,  0.0219354540928367,  0.024347903817536057,  0.026613923491968422,  0.02871988454969573,  0.030653121246464486,  0.0324020067283005,  0.0339560229076169,  0.03530582369564337,  0.036443291197901954,  0.03736158452898409,  0.03805518095031309,  0.03851990908212394,  0.038752973989212375,  0.038752973989212375,  0.03851990908212394,  0.03805518095031309,  0.03736158452898409,  0.036443291197901954,  0.03530582369564337,  0.0339560229076169,  0.0324020067283005,  0.030653121246464486,  0.02871988454969573,  0.026613923491968422,  0.024347903817536057,  0.0219354540928367,  0.019391083987236147,  0.016730097641273825,  0.013968503490011764,  0.011122924597083375,  0.008210529190953473,  0.005249142265577026,  0.0022606385492667702)'
 }
 
 /* 
@@ -530,14 +547,14 @@ XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX  */
 
 real matrix getdistvec(real matrix s1, real matrix s2)
 // computes vector of pariwise location distances
-// if external latlongflag=0, distances computed as norm, otherwise latitude / longitude and haversine formula for sphere with radius 1/Pi
+// if external scpc_latlongflag=0, distances computed as norm, otherwise latitude / longitude and haversine formula for sphere with radius 1/Pi
 {
-	external real scalar latlongflag
+	external real scalar scpc_latlongflag
 	real vector dist, rad
 	real scalar c
 	real matrix d
-	if(latlongflag==0){
-		dist=sqrt(rowsum((s1-s2):^2))
+	if(scpc_latlongflag==0){
+		dist=scpc_euclidean_row_norm(s1 - s2)
 	}
 	else
 		{
@@ -555,18 +572,18 @@ void normalize_s(real matrix s)
 // normalizes locations to ensure invariance given probabilistic algorithm
 // if locations are in lat/long format, just normalize longitudes (so invariance of rotations around polar axis)
 {
-	external real scalar latlongflag
+	external real scalar scpc_latlongflag
 	real matrix evecs
 	real vector evals
-	external real vector permfin
+	external real vector scpc_permfin
 	
-	if(latlongflag==0) {
+	if(scpc_latlongflag==0) {
 		s=s:-mean(s)		
 		symeigensystem(cross(s,s),evecs,evals)
 		s=s*evecs		
 		if(max(s[.,1])!=max(abs(s[.,1]))) s=-s
-		permfin=order(s,(1::cols(s))')	
-		s=s[permfin,.]
+		scpc_permfin=order(s,(1::cols(s))')
+		s=s[scpc_permfin,.]
 		s=s:-colmin(s)
 		s=s/max(s)	
 	}
@@ -574,17 +591,17 @@ void normalize_s(real matrix s)
 	{
 		s[.,2]=s[.,2]:-mean(s[.,2])
 		s[.,2]=mod(s[.,2]:+180,360):-180
-		permfin=order(s,(1,2))	
-		s=s[permfin,.]
+		scpc_permfin=order(s,(1,2))
+		s=s[scpc_permfin,.]
 	}
 }
 
 real scalar nextU()
-// simple pseudo-random number generator, state (=seed) in global variable random_t 
+// simple pseudo-random number generator, state (=seed) in global variable scpc_random_t
 {
-	external real scalar random_t
-	random_t=mod(64389*random_t + 1,2^32)
-	return(random_t/2^32)
+	external real scalar scpc_random_t
+	scpc_random_t=mod(64389*scpc_random_t + 1,2^32)
+	return(scpc_random_t/2^32)
 }
 
 void jumble_s(real matrix s, real scalar m)
@@ -603,7 +620,7 @@ void jumble_s(real matrix s, real scalar m)
 	}
 }	
 
-struct sms{
+struct scpc_sms{
 // helper struct for capN random sets of m locations: mat stores distmat, s stores locations
 		real matrix mat
 		real matrix s
@@ -612,50 +629,50 @@ struct sms{
 void LNsetWc0(real matrix s,real scalar avc,real matrix W, real scalar c0, real scalar cmax)
 {
 // computes W and c0 when n is large
-	external real scalar m,capN
-	external real scalar qmax, minavc
-	struct sms vector ms
+	external real scalar scpc_m,scpc_capN
+	external real scalar scpc_qmax, scpc_minavc
+	struct scpc_sms vector ms
 	real vector distvec
 	real rowvector evals
 	real colvector v
 	real scalar i,j,n,floor_corr,minavc_eff
-	real matrix r,W0,Wx,Wall,evecs
+	real matrix r,W0,scpc_Wx,Wall,evecs
 	
 	n=rows(s)
-	ms=sms(capN)
-	distvec=J(capN*m*(m-1)/2,1,0) // vector of all pairwise distances across capN random locations
+	ms=scpc_sms(scpc_capN)
+	distvec=J(scpc_capN*scpc_m*(scpc_m-1)/2,1,0) // vector of all pairwise distances across scpc_capN random locations
 	
 	r=s	// ensure s does not get jumbled
-	for(i=1;i<=capN;i++){
-		jumble_s(r,m)		
-		ms[i].s=r[1::m,.]
-		ms[i].mat=getdistmat(ms[i].s)
-		distvec[(i-1)*m*(m-1)/2+1::i*m*(m-1)/2]=lvech(ms[i].mat)
+	for(i=1;i<=scpc_capN;i++){
+		jumble_s(r,scpc_m)
+		ms[i].s=r[1::scpc_m,.]
+		ms[i].mat=scpc_getdistmat(ms[i].s)
+		distvec[(i-1)*scpc_m*(scpc_m-1)/2+1::i*scpc_m*(scpc_m-1)/2]=scpc_lvech(ms[i].mat)
 	}
 	floor_corr=mean(distvec :== 0)
-	minavc_eff=floor_corr + (1 - floor_corr) * minavc
+	minavc_eff=floor_corr + (1 - floor_corr) * scpc_minavc
 	c0=getc0fromavc(distvec,avc)
 	cmax=getc0fromavc(distvec,minavc_eff)
 	
-	Wall=J(n,capN*qmax,0)		// matrix of all eigenvectors 1,...,qmax across all capN random locations
-	for(i=1;i<=capN;i++){
-		symeigensystemselecti(demeanmat(exp(-c0*ms[i].mat)),(1,qmax),W0,evals)
-		Wx=J(n,qmax,0)		// m x qmax eigenvectors from ith random set of m locations
-		for(j=1;j<=m;j++){
+	Wall=J(n,scpc_capN*scpc_qmax,0)		// matrix of all eigenvectors 1,...,scpc_qmax across all scpc_capN random locations
+	for(i=1;i<=scpc_capN;i++){
+		symeigensystemselecti(scpc_demeanmat(exp(-c0*ms[i].mat)),(1,scpc_qmax),W0,evals)
+		scpc_Wx=J(n,scpc_qmax,0)		// m x scpc_qmax eigenvectors from ith random set of m locations
+		for(j=1;j<=scpc_m;j++){
 			v=exp(-c0*getdistvec(s, J(n, 1, 1)*ms[i].s[j,.]))
-			Wx=Wx+v*W0[j,.]		// Nystrom extension 
+			scpc_Wx=scpc_Wx+v*W0[j,.]		// Nystrom extension
 		}
-		Wx=Wx:-mean(Wx)
-		Wx=Wx:/sqrt(colsum(Wx:^2))				
-		for(j=1;j<=qmax;j++){
-			Wall[.,(j-1)*capN+i]=Wx[.,j] // store such that first capN vectors correspond to eigenvectors corresponding to largest eigenvalue, etc
+		scpc_Wx=scpc_Wx:-mean(scpc_Wx)
+		scpc_Wx=scpc_Wx:/sqrt(colsum(scpc_Wx:^2))
+		for(j=1;j<=scpc_qmax;j++){
+			Wall[.,(j-1)*scpc_capN+i]=scpc_Wx[.,j] // store such that first capN vectors correspond to eigenvectors corresponding to largest eigenvalue, etc
 		}
 	}	
-	W=J(n,qmax,0)
-	for(i=1;i<=qmax;i++){
-		Wx=Wall[.,1::capN*i]
-		symeigensystemselecti(cross(Wx,Wx),(1,1),evecs,evals)	
-		W[.,i]=Wx*evecs		// first (sample) principle component of first 1,...,q*capN columns of Wall
+	W=J(n,scpc_qmax,0)
+	for(i=1;i<=scpc_qmax;i++){
+		scpc_Wx=Wall[.,1::scpc_capN*i]
+		symeigensystemselecti(cross(scpc_Wx,scpc_Wx),(1,1),evecs,evals)
+		W[.,i]=scpc_Wx*evecs		// first (sample) principle component of first 1,...,q*capN columns of Wall
 		W[.,i]=W[.,i]/sqrt(colsum(W[.,i]:^2))
 		Wall=Wall-W[.,i]*cross(W[.,i],Wall) // project off new principle component
 	}
@@ -677,29 +694,43 @@ real vector raninds(real scalar n,real scalar capM)
 	return(v)
 }
 
-struct mats vector LNgetOms(real matrix s, real scalar c0, real scalar cmax,real matrix W)
+struct scpc_mats vector LNgetOms(real matrix s, real scalar c0, real scalar cmax,real matrix W)
 {
-// version of getOms that is faster if n is very large using a random selection of capM pairwise distances
-	external real scalar capM, cgridfac
-	struct mats vector Oms
-	external real scalar qmax
-	real scalar i, c, n
-	real vector inds,dist,cd
-	real matrix W1,W2,gram
+// version of getOms that is faster if n is very large using a random selection of scpc_capM pairwise distances
+	external real scalar scpc_capM, scpc_cgridfac
+	struct scpc_mats vector Oms
+	external real scalar scpc_qmax
+	real scalar i, c, n, covariance_scale
+	real vector inds,dist,cd, eigenvalues
+	real matrix W1,W2,gram, cross_sample, normalized_covariance
 	
 	n=rows(s)
-	Oms=mats(getnc(c0,cmax))
-	inds=raninds(n,capM)
-//	dist=sqrt(rowsum((s[inds[1::capM],.]-s[inds[2::capM+1],.]):^2)) // capM distance vector of pairwise distances
-	dist=getdistvec(s[inds[1::capM],.],s[inds[2::capM+1],.])
-	W1=W[inds[1::capM],.]		
-	W2=W[inds[2::capM+1],.]
+	Oms=scpc_mats(getnc(c0,cmax))
+	inds=raninds(n,scpc_capM)
+//	dist=sqrt(rowsum((s[inds[1::scpc_capM],.]-s[inds[2::scpc_capM+1],.]):^2)) // scpc_capM distance vector of pairwise distances
+	dist=getdistvec(s[inds[1::scpc_capM],.],s[inds[2::scpc_capM+1],.])
+	W1=W[inds[1::scpc_capM],.]
+	W2=W[inds[2::scpc_capM+1],.]
 	gram=cross(W, W)
 	c=c0
 	for(i=1;i<=length(Oms);i++){
 		cd=exp(-c*dist)
-		Oms[i].mat=gram+.5*(n*(n-1)/capM)*(cross(W1,cd,W2)+cross(W2,cd,W1))
-		c=c*cgridfac			
+		cross_sample = cross(W1, cd, W2)
+		Oms[i].mat = gram + .5 * (n * (n - 1) / scpc_capM) * (cross_sample + cross_sample')
+		if (hasmissing(Oms[i].mat)) {
+			errprintf("invalid sampled covariance: SCPC covariance grid is nonfinite; try exact SCPC\n")
+			exit(198)
+		}
+		covariance_scale = max(abs(Oms[i].mat))
+		if (covariance_scale > 0) {
+			normalized_covariance = Oms[i].mat / covariance_scale
+			eigenvalues = symeigenvalues(normalized_covariance)
+			if (hasmissing(eigenvalues) | min(eigenvalues) < -32 * cols(W) * epsilon(1)) {
+				errprintf("invalid sampled covariance: SCPC covariance grid is not positive semidefinite; try exact SCPC\n")
+				exit(198)
+			}
+		}
+		c=c*scpc_cgridfac
 	}
 	return(Oms)
 }
@@ -712,35 +743,35 @@ XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX  */
 
 void setcvsflag(real scalar cvsf)
 {
-	external real scalar cvsflag
-	cvsflag=cvsf
+	external real scalar scpc_cvsflag
+	scpc_cvsflag=cvsf
 }
 
 
 void set_method_opts(real scalar is_approx, real scalar seed_in)
 {
-	external real scalar approxflag, seedval
-	approxflag = (is_approx != 0)
-	seedval = seed_in
+	external real scalar scpc_approxflag, scpc_seedval
+	scpc_approxflag = (is_approx != 0)
+	scpc_seedval = seed_in
 }
 
 void setOmsWfin(real scalar avc0, string scalar sel, string scalar latlong)
 {
-	external real matrix s
-	external real scalar c0,cmax
+	external real matrix scpc_geometry
+	external real scalar scpc_c0,scpc_cmax
 	real scalar cv,n,floor_corr,minavc_eff,is_approx,seed_use,q_limit
-	external real matrix distmat
+	external real matrix scpc_distmat
 	real matrix W
-	external real scalar random_t, approxflag, seedval
-	external real scalar latlongflag
-	struct mats vector Oms
-	external real scalar qmax, capM, m, cgridfac, capN, minavc
+	external real scalar scpc_random_t, scpc_approxflag, scpc_seedval
+	external real scalar scpc_latlongflag
+	struct scpc_mats vector Oms
+	external real scalar scpc_qmax, scpc_capM, scpc_m, scpc_cgridfac, scpc_capN, scpc_minavc
 
-	external struct mats vector Omsfin
-	external real matrix Wfin
-	external real vector permfin
-	external real scalar cvfin
-	external real scalar condflag
+	external struct scpc_mats vector scpc_Omsfin
+	external real matrix scpc_Wfin
+	external real vector scpc_permfin
+	external real scalar scpc_cvfin
+	external real scalar scpc_condflag
 	string scalar slist_raw
 	string vector slist
 	real vector slist_nums, slist_order, dvec
@@ -768,13 +799,13 @@ void setOmsWfin(real scalar avc0, string scalar sel, string scalar latlong)
 		}
 	}
 	
-	s=st_data(.,slist',sel)		// Import slist variables, now correctly ordered and continuously numbered 
+	scpc_geometry=st_data(.,slist',sel)		// Import slist variables, now correctly ordered and continuously numbered
 								// expects locations in s_1, s_2, s_3... etc. Dimension d is equal to the number of s_ variables 
 	
 	// ----------------------------------------------------------------------
 	
-	n=rows(s)
-	if(sum(rowmissing(s) :== 0) < n){
+	n=rows(scpc_geometry)
+	if(sum(rowmissing(scpc_geometry) :== 0) < n){
 		stata("disp as text"+char(34)+"missing value(s) in s_* variable; aborting"+char(34))
 		exit(999)
 	}
@@ -782,14 +813,14 @@ void setOmsWfin(real scalar avc0, string scalar sel, string scalar latlong)
 		stata("disp as text"+char(34)+"too few locations found in variables s_1, s_2 etc; aborting"+char(34))
 		exit(999)
 	}		
-	stata("disp as text"+char(34)+"found "+strofreal(rows(s), "%6.0f")+" observations / clusters and "+strofreal(cols(s), "%3.0f")+"-dimensional locations in s_*"+char(34))
-	latlongflag=latlong!=""
-	if(latlongflag==0) {
-		stata("disp as text"+char(34)+"using Euclidan norm to compute distance between locations stored in s_*")
+	stata("disp as text"+char(34)+"found "+strofreal(rows(scpc_geometry), "%6.0f")+" observations / clusters and "+strofreal(cols(scpc_geometry), "%3.0f")+"-dimensional locations in s_*"+char(34))
+	scpc_latlongflag=latlong!=""
+	if(scpc_latlongflag==0) {
+		stata("disp as text"+char(34)+"using Euclidean norm to compute distance between locations stored in s_*")
 	}
 	else
 	{
-		if(cols(s)!=2) {
+		if(cols(scpc_geometry)!=2) {
 			stata("disp as text"+char(34)+"with latlong option, there must only be s_1 and s_2 present")
 			exit(999)
 		}
@@ -797,67 +828,67 @@ void setOmsWfin(real scalar avc0, string scalar sel, string scalar latlong)
 			stata("disp as text"+char(34)+"Computing distances on surface of sphere treating s_1 as latitude and s_2 as longitude")
 		}
 	}
-	condflag=0
+	scpc_condflag=0
 	setGQxw()
-	minavc=0.00001			// minimal avc value for which size control is checked
-	cgridfac=1.2			// factor in c-grid for size control
+	scpc_minavc=0.00001			// minimal avc value for which size control is checked
+	scpc_cgridfac=1.2			// factor in c-grid for size control
 	
 	if(avc0>=0.05){
-		qmax=10
+		scpc_qmax=10
 	}
 	else{
 		if(avc0>=0.01){
-		qmax=20
+		scpc_qmax=20
 		}
 		else{
 			if(avc0>=0.005){
-				qmax=60
+				scpc_qmax=60
 			}
 			else{
-				qmax=120
+				scpc_qmax=120
 			}
 		}
 	}
-	is_approx = (length(approxflag) > 0 ? (approxflag != 0) : (n >= 4500))
-	seed_use = (length(seedval) > 0 ? seedval : 1)
+	is_approx = (length(scpc_approxflag) > 0 ? (scpc_approxflag != 0) : (n >= 4500))
+	seed_use = (length(scpc_seedval) > 0 ? scpc_seedval : 1)
 	if (is_approx == 0) {
-		permfin = (1::n)
-		distmat = getdistmat(s)
-		dvec = lvech(distmat)
+		scpc_permfin = (1::n)
+		scpc_distmat = scpc_getdistmat(scpc_geometry)
+		dvec = scpc_lvech(scpc_distmat)
 		floor_corr = mean(dvec :== 0)
-		minavc_eff = floor_corr + (1 - floor_corr) * minavc
-		c0 = getc0fromavc(dvec, avc0)
-		cmax = getc0fromavc(dvec, minavc_eff)
+		minavc_eff = floor_corr + (1 - floor_corr) * scpc_minavc
+		scpc_c0 = getc0fromavc(dvec, avc0)
+		scpc_cmax = getc0fromavc(dvec, minavc_eff)
 		q_limit = n - 1
 	}
 	else {
-		capN=20			// number of random sets of locations (of size m) used to approximate eigenvectors
-		capM=1000000		// number of location pairs used to approximate Om(c) (in production: capM=1000000 or so)
-		m=min((1000, n))	// size of set of locations for which eigenvector is computed, and then Nystrom extended from m to n
-		normalize_s(s)
-		q_limit = m - 1
+		scpc_capN=20			// number of random sets of locations (of size scpc_m) used to approximate eigenvectors
+		scpc_capM=1000000		// number of location pairs used to approximate Om(c) (in production: scpc_capM=1000000 or so)
+		scpc_m=min((1000, n))	// size of set of locations for which eigenvector is computed, and then Nystrom extended from scpc_m to n
+		normalize_s(scpc_geometry)
+		q_limit = scpc_m - 1
 	}
 	while(1){
-		qmax=min((q_limit,qmax))
+		scpc_qmax=min((q_limit,scpc_qmax))
 		if(is_approx==0){
 	// code for small n
-			W=getW(distmat,c0)
-			Oms=getOms(distmat,c0,cmax,W)		
+			W=getW(scpc_distmat,scpc_c0)
+			Oms=getOms(scpc_distmat,scpc_c0,scpc_cmax,W)
 			}
 		else{
-			random_t=seed_use
-			LNsetWc0(s,avc0,W,c0,cmax)
-			Oms=LNgetOms(s,c0,cmax,W)	
+			scpc_random_t=seed_use
+			LNsetWc0(scpc_geometry,avc0,W,scpc_c0,scpc_cmax)
+			Oms=LNgetOms(scpc_geometry,scpc_c0,scpc_cmax,W)
 		}
 		setfinalW(Oms,W,cv)
-		if(cols(W)-1<qmax | qmax==q_limit) break
-		qmax=round(qmax+qmax/2,1)
+		if(cols(W)-1<scpc_qmax | scpc_qmax==q_limit) break
+		scpc_qmax=round(scpc_qmax+scpc_qmax/2,1)
 	}
 	stata("disp as text"+char(34)+"SCPC optimal q = "+strofreal(cols(W)-1, "%3.0f")+" for maximal average pairwise correlation = "+strofreal(avc0, "%5.3f")+`pavc'"")
 	
-	Wfin=W
-	Omsfin=Oms
-	cvfin=cv
+	scpc_Wfin=W
+	scpc_Omsfin=Oms
+	scpc_cvfin=cv
 
 }
 
@@ -866,69 +897,69 @@ void set_scpcstats(string scalar w, string scalar sel, string scalar outmat)
 {	
 	real vector y
 	real scalar tau, pval, SE, y_norm, proj_norm
-	external real scalar condflag, cvsflag
-	external struct mats vector Omsfin, Omsxfin
-	external real matrix Wfin, Wx
-	external real vector permfin
-	external real scalar cvfin,cvxfin
+	external real scalar scpc_condflag, scpc_cvsflag
+	external struct scpc_mats vector scpc_Omsfin, scpc_Omsxfin
+	external real matrix scpc_Wfin, scpc_Wx
+	external real vector scpc_permfin
+	external real scalar scpc_cvfin,scpc_cvxfin
 	real scalar cv
 	
 
 	y=st_data(.,w,sel)
 
-	y=y[permfin]	
+	y=y[scpc_permfin]
 	y_norm=norm(y)
-	proj_norm=norm(cross(Wfin[.,2::cols(Wfin)],y))
+	proj_norm=norm(cross(scpc_Wfin[.,2::cols(scpc_Wfin)],y))
 	if(y_norm == 0 | y_norm >= . | proj_norm >= . | proj_norm <= 1e-12 * y_norm){
 		stata("disp as text "+char(34)+"SCPC variance projection is degenerate; aborting"+char(34))
 		exit(999)
 	}
-	tau=gettau(y,Wfin)
-	pval=maxrp(Omsfin,cols(Wfin)-1,abs(tau)/sqrt(cols(Wfin)-1)) 
-	cv=cvfin
-	if(condflag) {
-		pval=max((pval,maxrp(Omsxfin,cols(Wx)-1,abs(tau)/sqrt(cols(Wx)-1))))
-		cv=max((cv,cvxfin))
+	tau=gettau(y,scpc_Wfin)
+	pval=maxrp(scpc_Omsfin,cols(scpc_Wfin)-1,abs(tau)/sqrt(cols(scpc_Wfin)-1))
+	cv=scpc_cvfin
+	if(scpc_condflag) {
+		pval=max((pval,maxrp(scpc_Omsxfin,cols(scpc_Wx)-1,abs(tau)/sqrt(cols(scpc_Wx)-1))))
+		cv=max((cv,scpc_cvxfin))
 	}
-	SE=proj_norm/(sqrt(cols(Wfin)-1)*sqrt(rows(Wfin)))
+	SE=proj_norm/(sqrt(cols(scpc_Wfin)-1)*sqrt(rows(scpc_Wfin)))
 	st_matrix(outmat, (mean(y), SE, tau, pval, mean(y)-cv*SE,mean(y)+cv*SE ))	// coef, SE, tstat, p-value, 95% CI
 }
 
 void set_ccspc()
 {
-	external struct mats vector Omsxfin
-	external real matrix s
-	external real scalar c0,cmax,cvxfin,approxflag
-	external real matrix distmat, Wx
+	external struct scpc_mats vector scpc_Omsxfin
+	external real matrix scpc_geometry
+	external real scalar scpc_c0,scpc_cmax,scpc_cvxfin,scpc_approxflag
+	external real matrix scpc_distmat, scpc_Wx
 	real scalar is_approx
 	
-	is_approx = (length(approxflag) > 0 ? (approxflag != 0) : (rows(Wx) >= 4500))
+	is_approx = (length(scpc_approxflag) > 0 ? (scpc_approxflag != 0) : (rows(scpc_Wx) >= 4500))
 	if(is_approx==0){
-		Omsxfin=getOms(distmat,c0,cmax,Wx)		
+		scpc_Omsxfin=getOms(scpc_distmat,scpc_c0,scpc_cmax,scpc_Wx)
 		}
 	else{
-		Omsxfin=LNgetOms(s,c0,cmax,Wx)
+		scpc_Omsxfin=LNgetOms(scpc_geometry,scpc_c0,scpc_cmax,scpc_Wx)
 	}
-	cvxfin=getcv(Omsxfin,cols(Wx)-1,0.05)	
+	scpc_cvxfin=getcv(scpc_Omsxfin,cols(scpc_Wx)-1,0.05)
 }
 
 void set_Wx_cluster(string scalar Vname, string scalar sel,
 	string scalar weight_before, string scalar weight_after,
 	string scalar r_var, string scalar rx_var, string scalar hold_name)
 {	
-	external real scalar condflag
-	external real matrix Wfin
-	external real matrix Wx
-	external real vector permfin
+	external real scalar scpc_condflag
+	external real matrix scpc_Wfin
+	external real matrix scpc_Wx
+	external real vector scpc_permfin
 	real vector r, diag_g
 	real rowvector col_norms
 	real scalar i, pre_max_cl
 	
-	condflag=1
-	r=J(rows(Wfin),1,0)
-	Wx=Wfin
-	for(i=1;i<=cols(Wfin);i++){
-		r[permfin]=Wfin[.,i]	
+	scpc_condflag=1
+	r=J(rows(scpc_Wfin),1,0)
+	scpc_Wx=scpc_Wfin
+	for(i=1;i<=cols(scpc_Wfin);i++){
+		r[scpc_permfin]=scpc_Wfin[.,i]
 		stata("cap drop " + r_var)
 		stata("qui gen double " + r_var + "=.")
 		stata("qui replace " + r_var + "=0 if e(sample)")
@@ -949,13 +980,13 @@ void set_Wx_cluster(string scalar Vname, string scalar sel,
 		stata("cap drop " + rx_var)
 		stata("qui by \`e(clustvar)': egen double " + rx_var + "=total(" + r_var + "*" + weight_after + ") if e(sample)")  // BACKSLASH TO PREVENT EVALUATION WHEN FUNCTION IS FIRST READ
 		
-		Wx[.,i]=st_data(.,rx_var,sel)[permfin]
+		scpc_Wx[.,i]=st_data(.,rx_var,sel)[scpc_permfin]
 	}
 	stata("cap drop " + r_var + " " + rx_var)
-	if (cols(Wx) > 1) {
-		diag_g = sqrt(rows(Wfin)) * Wx[., 1]
-		pre_max_cl = max(sqrt(colsum((Wfin[., 2::cols(Wfin)] :* diag_g):^2)))
-		col_norms = sqrt(colsum(Wx[., 2::cols(Wx)]:^2))
+	if (cols(scpc_Wx) > 1) {
+		diag_g = sqrt(rows(scpc_Wfin)) * scpc_Wx[., 1]
+		pre_max_cl = max(sqrt(colsum((scpc_Wfin[., 2::cols(scpc_Wfin)] :* diag_g):^2)))
+		col_norms = sqrt(colsum(scpc_Wx[., 2::cols(scpc_Wx)]:^2))
 		if (pre_max_cl == 0 | pre_max_cl >= . | max(col_norms) >= . | max(col_norms) <= 1e-12 * pre_max_cl) {
 			stata("disp as text "+char(34)+"conditional projection collapsed all non-constant W columns; aborting"+char(34))
 			exit(999)
@@ -968,20 +999,20 @@ void set_Wx_nocluster(string scalar Vname, string scalar sel,
 	string scalar weight_before, string scalar weight_after,
 	string scalar r_var, string scalar rx_var, string scalar hold_name)
 {	
-	external real scalar condflag
-	external real matrix Wfin
-	external real matrix Wx
-	external real vector permfin
+	external real scalar scpc_condflag
+	external real matrix scpc_Wfin
+	external real matrix scpc_Wx
+	external real vector scpc_permfin
 	real vector r
 	real rowvector col_norms
 	real scalar i, pre_max
 	
-	condflag=1
-	r=J(rows(Wfin),1,0)
-	Wx=Wfin	
+	scpc_condflag=1
+	r=J(rows(scpc_Wfin),1,0)
+	scpc_Wx=scpc_Wfin
 	pre_max=0
-	for(i=1;i<=cols(Wfin);i++){
-		r[permfin]=Wfin[.,i]	
+	for(i=1;i<=cols(scpc_Wfin);i++){
+		r[scpc_permfin]=scpc_Wfin[.,i]
 		stata("cap drop " + r_var)
 		stata("qui gen double " + r_var + "=.")
 		st_store(.,r_var,sel,r)
@@ -999,11 +1030,11 @@ void set_Wx_nocluster(string scalar Vname, string scalar sel,
 			stata("_estimates unhold " + hold_name)
 			stata("qui replace " + rx_var + "=" + r_var + "*" + weight_after + " if e(sample)")
 		}		
-		Wx[.,i]=st_data(.,rx_var,sel)[permfin]		
+		scpc_Wx[.,i]=st_data(.,rx_var,sel)[scpc_permfin]
 	}	
 	stata("cap drop " + r_var + " " + rx_var)
-	if (cols(Wx) > 1) {
-		col_norms = sqrt(colsum(Wx[., 2::cols(Wx)]:^2))
+	if (cols(scpc_Wx) > 1) {
+		col_norms = sqrt(colsum(scpc_Wx[., 2::cols(scpc_Wx)]:^2))
 		if (pre_max == 0 | pre_max >= . | max(col_norms) >= . | max(col_norms) <= 1e-12 * pre_max) {
 			stata("disp as text "+char(34)+"conditional projection collapsed all non-constant W columns; aborting"+char(34))
 			exit(999)
@@ -1012,45 +1043,80 @@ void set_Wx_nocluster(string scalar Vname, string scalar sel,
 	set_ccspc()
 }
 
-void set_Wx_iv_nocluster(string scalar u_vars, string scalar v_vars,
+void scpc_iv_rank_error()
+{
+	errprintf("IV residualizer is rank deficient\n")
+	exit(999)
+}
+
+real matrix scpc_iv_projector(real matrix X, real matrix Z)
+{
+	real rowvector scale, instrument_scale
+	real matrix Qz, U, Vt
+	real colvector s
+	real scalar p, rank
+
+	p = cols(X)
+	if (p == 0 | cols(Z) < p | rows(X) < p | rows(X) != rows(Z) |
+		hasmissing(X) | hasmissing(Z)) scpc_iv_rank_error()
+
+	// Normalize X in place so callers use the matching right factor.
+	scale = colmax(abs(X))
+	if (any(scale :== 0)) scpc_iv_rank_error()
+	X = X :/ scale
+
+	instrument_scale = colmax(abs(Z))
+	Z = Z :/ (instrument_scale :+ (instrument_scale :== 0))
+	if (cols(Z) > rows(Z)) {
+		svd(Z', U = ., s = ., Vt = .)
+		Qz = Vt'
+	}
+	else {
+		svd(Z, Qz = ., s = ., Vt = .)
+	}
+	if (hasmissing(s)) scpc_iv_rank_error()
+	rank = sum(s :> 1e-10 * max(s))
+	if (rank < p) scpc_iv_rank_error()
+	Qz = Qz[., 1..rank]
+
+	// Work in the instrument span so nearly singular directions cannot
+	// amplify components outside that span when forming the dual factor.
+	svd(cross(Qz, X), U = ., s = ., Vt = .)
+	if (hasmissing(s) | min(s) <= 1e-10 * max(s)) scpc_iv_rank_error()
+	return(Qz * ((U :/ s') * Vt))
+}
+
+void set_Wx_iv_nocluster(string scalar u_vars, string scalar z_vars,
 	string scalar sample_sel, string scalar weight_before, string scalar weight_after)
 {
-	external real scalar condflag
-	external real matrix Wfin, Wx
-	external real vector permfin
-	real matrix U_iv, PZX, A, V_T, V_iv, B_q, rx_orig, rr_orig, wx_orig
+	external real scalar scpc_condflag
+	external real matrix scpc_Wfin, scpc_Wx
+	external real vector scpc_permfin
+	real matrix U_iv, Z, V_iv, B_q, rx_orig, rr_orig, wx_orig
 	real colvector xb, xa, col_norms
-	real scalar pre_max, m_obs, p_iv, q
+	real scalar pre_max, q
 
-	condflag = 1
-	Wx = Wfin
+	scpc_condflag = 1
+	scpc_Wx = scpc_Wfin
 	xb = st_data(., weight_before, sample_sel)
 	xa = st_data(., weight_after, sample_sel)
-	Wx[., 1] = Wfin[., 1] :* (xb[permfin] :* xa[permfin])
+	scpc_Wx[., 1] = scpc_Wfin[., 1] :* (xb[scpc_permfin] :* xa[scpc_permfin])
 
-	q = cols(Wfin) - 1
+	q = cols(scpc_Wfin) - 1
 	if (q > 0) {
 		U_iv = st_data(., tokens(u_vars), sample_sel)
-		PZX = st_data(., tokens(v_vars), sample_sel)
-		m_obs = rows(U_iv)
-		p_iv = cols(U_iv)
-		A = cross(U_iv, PZX)
-		V_T = lusolve(A', PZX')
-		if (rows(V_T) != p_iv | cols(V_T) != m_obs | hasmissing(V_T)) {
-			stata("disp as text " + char(34) + "IV residualizer is rank deficient; aborting" + char(34))
-			exit(999)
-		}
-		V_iv = V_T'
+		Z = st_data(., tokens(z_vars), sample_sel)
+		V_iv = scpc_iv_projector(U_iv, Z)
 
-		B_q = J(m_obs, q, 0)
-		B_q[permfin, .] = Wfin[., 2::cols(Wfin)]
+		B_q = J(rows(xb), q, 0)
+		B_q[scpc_permfin, .] = scpc_Wfin[., 2::cols(scpc_Wfin)]
 		rx_orig = B_q :* xb
 		pre_max = max(sqrt(colsum(rx_orig :^ 2)))
 		rr_orig = rx_orig - V_iv * cross(U_iv, rx_orig)
 		wx_orig = rr_orig :* xa
-		Wx[., 2::cols(Wx)] = wx_orig[permfin, .]
+		scpc_Wx[., 2::cols(scpc_Wx)] = wx_orig[scpc_permfin, .]
 
-		col_norms = sqrt(colsum(Wx[., 2::cols(Wx)] :^ 2))'
+		col_norms = sqrt(colsum(scpc_Wx[., 2::cols(scpc_Wx)] :^ 2))'
 		if (pre_max == 0 | pre_max >= . | max(col_norms) >= . | max(col_norms) <= 1e-12 * pre_max) {
 			stata("disp as text " + char(34) + "conditional projection collapsed all non-constant W columns; aborting" + char(34))
 			exit(999)
@@ -1059,56 +1125,48 @@ void set_Wx_iv_nocluster(string scalar u_vars, string scalar v_vars,
 	set_ccspc()
 }
 
-void set_Wx_iv_cluster(string scalar u_vars, string scalar v_vars,
+void set_Wx_iv_cluster(string scalar u_vars, string scalar z_vars,
 	string scalar sample_sel, string scalar cl_idx_var,
 	string scalar weight_before, string scalar weight_after)
 {
-	external real scalar condflag
-	external real matrix Wfin, Wx
-	external real vector permfin
-	real matrix U_iv, PZX, A, V_T, V_iv, W_unperm, W_indiv, rx, rr, agg_unperm, info, col1_unperm
+	external real scalar scpc_condflag
+	external real matrix scpc_Wfin, scpc_Wx
+	external real vector scpc_permfin
+	real matrix U_iv, Z, V_iv, W_unperm, W_indiv, rx, rr, agg_unperm, info, col1_unperm
 	real colvector xb, xa, cl_vec, diag_g
 	real rowvector col_norms
-	real scalar pre_max_cl, m_obs, p_iv, n_cl, q
+	real scalar pre_max_cl, n_cl, q
 
-	condflag = 1
-	Wx = Wfin
-	n_cl = rows(Wfin)
+	scpc_condflag = 1
+	scpc_Wx = scpc_Wfin
+	n_cl = rows(scpc_Wfin)
 	cl_vec = st_data(., cl_idx_var, sample_sel)
 	xb = st_data(., weight_before, sample_sel)
 	xa = st_data(., weight_after, sample_sel)
 	info = panelsetup(cl_vec, 1)
 
-	W_unperm = J(n_cl, cols(Wfin), 0)
-	W_unperm[permfin, .] = Wfin
+	W_unperm = J(n_cl, cols(scpc_Wfin), 0)
+	W_unperm[scpc_permfin, .] = scpc_Wfin
 	W_indiv = W_unperm[cl_vec, .]
 
 	col1_unperm = panelsum(W_indiv[., 1] :* xb :* xa, info)
-	Wx[., 1] = col1_unperm[permfin]
+	scpc_Wx[., 1] = col1_unperm[scpc_permfin]
 
-	q = cols(Wfin) - 1
+	q = cols(scpc_Wfin) - 1
 	if (q > 0) {
-		diag_g = sqrt(n_cl) * Wx[., 1]
-		pre_max_cl = max(sqrt(colsum((Wfin[., 2::cols(Wfin)] :* diag_g) :^ 2)))
+		diag_g = sqrt(n_cl) * scpc_Wx[., 1]
+		pre_max_cl = max(sqrt(colsum((scpc_Wfin[., 2::cols(scpc_Wfin)] :* diag_g) :^ 2)))
 
 		U_iv = st_data(., tokens(u_vars), sample_sel)
-		PZX = st_data(., tokens(v_vars), sample_sel)
-		m_obs = rows(U_iv)
-		p_iv = cols(U_iv)
-		A = cross(U_iv, PZX)
-		V_T = lusolve(A', PZX')
-		if (rows(V_T) != p_iv | cols(V_T) != m_obs | hasmissing(V_T)) {
-			stata("disp as text " + char(34) + "IV residualizer is rank deficient; aborting" + char(34))
-			exit(999)
-		}
-		V_iv = V_T'
+		Z = st_data(., tokens(z_vars), sample_sel)
+		V_iv = scpc_iv_projector(U_iv, Z)
 
 		rx = W_indiv[., 2::cols(W_indiv)] :* xb
 		rr = rx - V_iv * cross(U_iv, rx)
 		agg_unperm = panelsum(rr :* xa, info)
-		Wx[., 2::cols(Wx)] = agg_unperm[permfin, .]
+		scpc_Wx[., 2::cols(scpc_Wx)] = agg_unperm[scpc_permfin, .]
 
-		col_norms = sqrt(colsum(Wx[., 2::cols(Wx)] :^ 2))
+		col_norms = sqrt(colsum(scpc_Wx[., 2::cols(scpc_Wx)] :^ 2))
 		if (pre_max_cl == 0 | pre_max_cl >= . | max(col_norms) >= . | max(col_norms) <= 1e-12 * pre_max_cl) {
 			stata("disp as text " + char(34) + "conditional projection collapsed all non-constant W columns; aborting" + char(34))
 			exit(999)
@@ -1120,21 +1178,21 @@ void set_Wx_iv_cluster(string scalar u_vars, string scalar v_vars,
 
 void set_scpccvs(string scalar outmat)
 {	
-	external struct mats vector Omsfin, Omsxfin
-	external real matrix Wfin
-	external real scalar condflag
+	external struct scpc_mats vector scpc_Omsfin, scpc_Omsxfin
+	external real matrix scpc_Wfin
+	external real scalar scpc_condflag
 	real scalar q,i,j
 	real matrix levels, cvs
 	
 	
 	levels=(.32,.10,.05,.01)
 	cvs=0*levels	
-	q=cols(Wfin)-1	
+	q=cols(scpc_Wfin)-1
 	for(i=1;i<=rows(levels);i++){
 		for(j=1;j<=cols(levels);j++){
-			cvs[i,j]=getcv(Omsfin,q,levels[i,j])
-			if(condflag){
-				cvs[i,j]=max((cvs[i,j],getcv(Omsxfin,q,levels[i,j])))
+			cvs[i,j]=getcv(scpc_Omsfin,q,levels[i,j])
+			if(scpc_condflag){
+				cvs[i,j]=max((cvs[i,j],getcv(scpc_Omsxfin,q,levels[i,j])))
 			}
 		}
 	}
@@ -1143,17 +1201,17 @@ void set_scpccvs(string scalar outmat)
 
 void get_scpc_meta(string scalar c0name, string scalar cvname, string scalar qname)
 {
-	external real scalar c0, cvfin
-	external real matrix Wfin
-	st_numscalar(c0name, c0)
-	st_numscalar(cvname, cvfin)
-	st_numscalar(qname, cols(Wfin) - 1)
+	external real scalar scpc_c0, scpc_cvfin
+	external real matrix scpc_Wfin
+	st_numscalar(c0name, scpc_c0)
+	st_numscalar(cvname, scpc_cvfin)
+	st_numscalar(qname, cols(scpc_Wfin) - 1)
 }
 
 end
 
 capture program drop scpc_setscores
-program scpc_setscores, sortpreserve
+program scpc_setscores
 	syntax, scpc_sel(name) score_vars(string) bread(name)
 	tempvar e
 	local slist ""
@@ -1174,6 +1232,8 @@ program scpc_setscores, sortpreserve
 	}
 	else if(e(cmd)=="areg"){
 		predict double `e' if e(sample),sc
+		tempvar initial_order
+		gen long `initial_order' = _n
 		sort `e(absvar)'
 		local na : colnames e(V)
 		tokenize `na'
@@ -1191,6 +1251,7 @@ program scpc_setscores, sortpreserve
 			local slist "`slist' `score_i'"
 			local ++i
 		}
+		sort `initial_order'
 	}
 	else if(e(cmd)=="ivregress"){
 		tempvar stata_scr
@@ -1222,19 +1283,21 @@ program scpc_setscores, sortpreserve
 	}
 	
 	matrix colnames `bread' = `slist'
-	gen `scpc_sel'=0
+	gen byte `scpc_sel'=0
 	if( "`e(clustvar)'"=="") qui replace `scpc_sel'=1 if e(sample)
 	else{
-		tempvar TotScore
+		tempvar TotScore score_sort_sample
+		gen byte `score_sort_sample' = !e(sample)
+		sort `e(clustvar)' `score_sort_sample'
 		local i = 1
 		while "``i''" != ""{
 			local score_i : word `i' of `score_vars'
 			capture drop `TotScore'
 			by `e(clustvar)': egen double `TotScore'=total(`score_i') if e(sample)
 			replace `score_i'=`TotScore'
-			by `e(clustvar)': replace `scpc_sel' = 1 if _n==1 & e(sample)
 			local ++i
 		}
+		by `e(clustvar)': replace `scpc_sel' = 1 if _n==1 & e(sample)
 	}
 	}
 end
@@ -1254,11 +1317,26 @@ program scpc, eclass sortpreserve
 			seed(real 1) ///
 			backend(string) ///
 			nthreads(integer -1) ///
+			CAPabilities ///
 		]
 		//	syntax [if] [in], [
 //		avc(real 1.0)
 //		]
 	
+	// The SPUR wrapper uses this option to check ado-level compatibility.
+	// Return without reading or replacing the active estimation results.
+	if "`capabilities'" != "" exit
+
+	if `"`e(wtype)'"' != "" | `"`e(wexp)'"' != "" {
+		di as error "SCPC does not support weighted estimation"
+		exit 198
+	}
+
+	if "`e(cmd)'" == "ivregress" & "`e(estimator)'" != "2sls" & "`uncond'" == "" {
+		di as error "Conditional IV SCPC requires ivregress 2sls"
+		exit 198
+	}
+
 	if "`exact'" != "" & "`approx'" != "" {
 		di as error "cannot specify both exact and approx options"
 		exit 198
@@ -1272,6 +1350,10 @@ program scpc, eclass sortpreserve
 	local req_backend = lower(trim(`"`backend'"'))
 	if "`req_backend'" == "" {
 		local req_backend = lower(trim(`"$SPATIAL_BACKEND"'))
+	}
+	if "`req_backend'" == "" {
+		local env_backend : environment SPATIAL_BACKEND
+		local req_backend = lower(trim(`"`env_backend'"'))
 	}
 	if "`req_backend'" == "" {
 		local req_backend "auto"
@@ -1328,24 +1410,50 @@ program scpc, eclass sortpreserve
 		}
 	}
 
-	local s_has_miss 0
-	if `slist_ok' == 1 {
-		foreach svar of local slist {
-			qui count if missing(`svar') & e(sample)
-			if r(N) > 0 {
-				local s_has_miss 1
-				continue, break
-			}
+	if `slist_ok' == 0 {
+		disp as text "s_* variables not continuously numbered starting from 1 (s_1, s_2, etc.)"
+		exit 999
+	}
+	foreach svar of local slist {
+		qui count if missing(`svar') & e(sample)
+		if r(N) > 0 {
+			disp as text "missing value(s) in s_* variable; aborting"
+			exit 999
+		}
+	}
+	if "`latlong'" != "" {
+		if `d' != 2 {
+			di as error "latlong option requires exactly s_1 and s_2"
+			exit 198
+		}
+		qui count if e(sample) & !inrange(s_1, -90, 90)
+		if r(N) > 0 {
+			di as error "latitude s_1 must be in [-90, 90] in the estimation sample"
+			exit 198
+		}
+		qui count if e(sample) & !inrange(s_2, -180, 180)
+		if r(N) > 0 {
+			di as error "longitude s_2 must be in [-180, 180] in the estimation sample"
+			exit 198
 		}
 	}
 
 	local has_cluster = ("`e(clustvar)'" != "")
-	local n_sites 0
 	if `has_cluster' == 1 {
 		tempvar cl_tag
 		qui egen `cl_tag' = tag(`e(clustvar)') if e(sample)
 		qui count if `cl_tag' == 1 & e(sample)
 		local n_sites = r(N)
+		foreach svar of local slist {
+			tempvar unique_coords_tag unique_coords_num
+			qui egen `unique_coords_tag' = tag(`e(clustvar)' `svar') if e(sample)
+			qui egen `unique_coords_num' = total(`unique_coords_tag') if e(sample), by(`e(clustvar)')
+			qui count if e(sample) & `unique_coords_num' != 1
+			if r(N) > 0 {
+				di as error "coordinates not constant within clusters in the estimation sample"
+				exit 999
+			}
+		}
 	}
 	else {
 		qui count if e(sample)
@@ -1364,14 +1472,16 @@ program scpc, eclass sortpreserve
 	local n_endog 0
 	local n_z_excl 0
 	local z_excl_vars ""
+	local backend_reason ""
 	if "`req_backend'" != "fallback" {
 		local plugin_ok 0
-		capture plugin call _scpc_rust_plugin, ping_v5
+		local plugin_reason "compatible scpc_rust.plugin (v6) could not be loaded. Install the matching plugin"
+		capture plugin call _scpc_rust_plugin, ping_v6
 		if _rc == 0 {
 			local plugin_ok 1
 		}
 		else {
-			capture program list _scpc_rust_plugin
+			capture plugin call _scpc_rust_plugin, ping
 			if _rc != 0 {
 				capture program _scpc_rust_plugin, plugin using("scpc_rust.plugin")
 				if _rc != 0 {
@@ -1381,9 +1491,15 @@ program scpc, eclass sortpreserve
 					}
 				}
 			}
-			capture plugin call _scpc_rust_plugin, ping_v5
+			capture plugin call _scpc_rust_plugin, ping_v6
 			if _rc == 0 {
 				local plugin_ok 1
+			}
+			else {
+				capture plugin call _scpc_rust_plugin, ping
+				if _rc == 0 {
+					local plugin_reason "loaded scpc_rust.plugin is incompatible with the required API (v6). Install the matching plugin and restart Stata"
+				}
 			}
 		}
 
@@ -1391,7 +1507,7 @@ program scpc, eclass sortpreserve
 		local rust_reason ""
 		if `plugin_ok' == 0 {
 			local rust_eligible 0
-			local rust_reason "compatible scpc_rust.plugin (v5) could not be loaded"
+			local rust_reason "`plugin_reason'"
 		}
 		else if "`e(cmd)'" == "regress" {
 			local is_iv 0
@@ -1399,13 +1515,13 @@ program scpc, eclass sortpreserve
 		else if "`e(cmd)'" == "areg" {
 			if "`uncond'" == "" {
 				local rust_eligible 0
-				local rust_reason "backend(rust) requires uncond option after areg"
+				local rust_reason "Rust backend requires uncond option after areg"
 			}
 		}
 		else if "`e(cmd)'" == "ivregress" {
 			if "`e(estimator)'" != "2sls" {
 				local rust_eligible 0
-				local rust_reason "backend(rust) only supports ivregress 2sls (got e(estimator)==`e(estimator)')"
+				local rust_reason "Rust backend only supports ivregress 2sls (got e(estimator)==`e(estimator)')"
 			}
 			else {
 				local is_iv 1
@@ -1413,34 +1529,18 @@ program scpc, eclass sortpreserve
 		}
 		else {
 			local rust_eligible 0
-			local rust_reason "backend(rust) only supports regress, ivregress 2sls, and uncond areg (got `e(cmd)')"
+			local rust_reason "Rust backend only supports regress, ivregress 2sls, and uncond areg (got `e(cmd)')"
 		}
 
-		if `rust_eligible' == 1 & "`e(wexp)'" != "" {
+		if `rust_eligible' == 1 & (`avc' <= 0.001 | `avc' >= 0.99) {
 			local rust_eligible 0
-			local rust_reason "backend(rust) does not support weighted estimation"
-		}
-		else if `rust_eligible' == 1 & `slist_ok' == 0 {
-			local rust_eligible 0
-			local rust_reason "s_* variables not continuously numbered starting from s_1"
-		}
-		else if `rust_eligible' == 1 & `s_has_miss' == 1 {
-			local rust_eligible 0
-			local rust_reason "missing value(s) in s_* coordinate variables"
-		}
-		else if `rust_eligible' == 1 & "`latlong'" != "" & `d' != 2 {
-			local rust_eligible 0
-			local rust_reason "latlong option requires exactly s_1 and s_2"
-		}
-		else if `rust_eligible' == 1 & (`avc' <= 0.001 | `avc' >= 0.99) {
-			local rust_eligible 0
-			local rust_reason "backend(rust) requires avc strictly between 0.001 and 0.99"
+			local rust_reason "Rust backend requires avc strictly between 0.001 and 0.99"
 		}
 
 		if `rust_eligible' == 1 {
 			if `n_sites' < 5 {
 				local rust_eligible 0
-				local rust_reason "backend(rust) requires at least 5 observations/clusters (got `n_sites')"
+				local rust_reason "Rust backend requires at least 5 observations/clusters (got `n_sites')"
 			}
 		}
 
@@ -1564,34 +1664,26 @@ program scpc, eclass sortpreserve
 			di as error "`rust_reason'"
 			exit 198
 		}
+		else {
+			local backend_reason "`rust_reason'"
+		}
 	}
+	else {
+		local backend_reason "requested fallback"
+	}
+
+	// Both paths use the same scores, cluster representatives, and row order.
+	local n_scores = colsof(`scpc_Bread')
+	local score_vars ""
+	forvalues j = 1/`n_scores' {
+		tempvar score_`j'
+		local score_vars "`score_vars' `score_`j''"
+	}
+	tempvar scpc_sel
+	scpc_setscores, scpc_sel(`scpc_sel') score_vars("`score_vars'") bread(`scpc_Bread')
 
 	local tied_val 0
 	if `use_rust' == 1 {
-		if `has_cluster' == 1 {
-			foreach tmp_svar of local slist {
-				tempvar unique_coords_tag unique_coords_num
-				qui egen `unique_coords_tag' = tag(`e(clustvar)' `tmp_svar') if e(sample)
-				qui egen `unique_coords_num' = total(`unique_coords_tag') if e(sample), by(`e(clustvar)')
-				qui sum `unique_coords_num' if e(sample)
-				if (r(min) != 1 | r(max) != 1) {
-					noi disp as text "coordinates not constant within clusters; aborting"
-					exit(999)
-				}
-			}
-			tempvar es
-			qui gen byte `es' = 0 if e(sample)
-			sort `e(clustvar)' `es'
-		}
-
-		local score_vars ""
-		forvalues j = 1/`p' {
-			tempvar score_`j'
-			local score_vars "`score_vars' `score_`j''"
-		}
-		tempvar scpc_sel
-		scpc_setscores, scpc_sel(`scpc_sel') score_vars("`score_vars'") bread(`scpc_Bread')
-
 		local k_use = min(`p', int(`k'))
 		tempname b_sub c0_scal cv_scal q_scal tied_scal scpctab scpc_cvs
 		matrix `b_sub' = `b_full'[1..., 1..`k_use']
@@ -1636,10 +1728,8 @@ program scpc, eclass sortpreserve
 
 		if "`req_backend'" == "auto" & scalar(`tied_scal') == 1 {
 			local use_rust 0
-			drop `score_vars' `scpc_sel'
-			if `has_cluster' == 1 {
-				capture drop `cl_idx' `es'
-			}
+			local tied_val 1
+			local backend_reason "tied eigenspace"
 			capture matrix drop `b_sub' `scpctab' `scpc_cvs'
 			capture scalar drop `c0_scal' `cv_scal' `q_scal' `tied_scal'
 		}
@@ -1651,7 +1741,7 @@ program scpc, eclass sortpreserve
 			local k `k_use'
 			di as text "found " %6.0f `n_sites' " observations / clusters and " %3.0f `d' "-dimensional locations in s_*"
 			if `latlong_flag' == 0 {
-				di as text "using Euclidan norm to compute distance between locations stored in s_*"
+				di as text "using Euclidean norm to compute distance between locations stored in s_*"
 			}
 			else {
 				di as text "Computing distances on surface of sphere treating s_1 as latitude and s_2 as longitude"
@@ -1666,40 +1756,6 @@ program scpc, eclass sortpreserve
 		}
 	}
 	if `use_rust' == 0 {
-		if `slist_ok' == 0 {
-			disp as text "s_* variables not continuously numbered starting from 1 (s_1, s_2, etc.)"
-			exit(999)
-		}
-		// ENSURE COORDINATES ARE UNIQUE WITHIN CLUSTERS
-		if( "`e(clustvar)'"!="") {
-			unab tmp_svarlist: s_*
-			qui foreach tmp_svar of varlist `tmp_svarlist'{
-				tempvar unique_coords_tag
-				tempvar unique_coords_num
-				egen `unique_coords_tag' = tag(`e(clustvar)' `tmp_svar')
-				egen `unique_coords_num' = total(`unique_coords_tag'), by(`e(clustvar)')
-				sum `unique_coords_num'
-				if (`r(min)'!=1 | `r(max)'!=1){
-					noi disp as text "coordinates not constant within clusters; aborting"
-					exit(999)
-				}
-			}
-		}
-		// -----------------------------------------
-		
-		if( "`e(clustvar)'"!="") {
-			tempvar es
-			gen `es'=0 if e(sample)
-			sort `e(clustvar)' `es'
-		}
-		local n_scores = colsof(`scpc_Bread')
-		local score_vars ""
-		forvalues j = 1/`n_scores' {
-			tempvar score_`j'
-			local score_vars "`score_vars' `score_`j''"
-		}
-		tempvar scpc_sel
-		scpc_setscores, scpc_sel(`scpc_sel') score_vars("`score_vars'") bread(`scpc_Bread')
 		mata set_method_opts(`approx_mode', `seed')
 		mata setOmsWfin(`avc',"`scpc_sel'","`latlong'")
 		
@@ -1734,7 +1790,7 @@ program scpc, eclass sortpreserve
 				local clist="qui reg `rx_var' `clist', noconstant"
 			}
 		}	
-		else if(e(cmd)=="ivregress"){
+		else if(e(cmd)=="ivregress" & "`uncond'"==""){
 			// Section 5.3 uses Xi_s' M' Xi R where M' = I - P_Z X (X' P_Z X)^-1 X'.
 			local weight_before `x_var'
 			local weight_after `xs_var'
@@ -1750,11 +1806,15 @@ program scpc, eclass sortpreserve
 			_estimates hold `oreg_hold', restore
 			local clist
 			local iv_u_vars
-			local iv_v_vars
 			local has_cons_iv : list posof "_cons" in na
+			quietly fvrevar `elist' if `ess'
+			local iv_z_vars "`r(varlist)'"
 			local reg_cons_opt ""
 			if `has_cons_iv' == 0 {
 				local reg_cons_opt ", noconstant"
+			}
+			else {
+				local iv_z_vars "`iv_z_vars' `one_iv'"
 			}
 			tokenize `na'
 			forval j = 1/`= colsof(`b_mat')' {
@@ -1765,19 +1825,16 @@ program scpc, eclass sortpreserve
 					qui replace `fs_`j''=. if !`ess'
 					local clist `clist' `fs_`j''
 					local iv_u_vars `iv_u_vars' ``j''
-					local iv_v_vars `iv_v_vars' `fs_`j''
 				}
 				else{
 					local clist `clist' ``j''
 					if "``j''" == "_cons" {
 						local iv_u_vars `iv_u_vars' `one_iv'
-						local iv_v_vars `iv_v_vars' `one_iv'
 					}
 					else if !(`b_mat'[1, `j'] == 0 & `scpc_Bread0'[`j', `j'] == 0) {
 						qui fvrevar ``j'' if `ess'
 						local rv "`r(varlist)'"
 						local iv_u_vars `iv_u_vars' `rv'
-						local iv_v_vars `iv_v_vars' `rv'
 					}
 				}
 			}
@@ -1812,19 +1869,24 @@ program scpc, eclass sortpreserve
 				matrix `coef_mat' = `neff'*`scpc_Bread0'[`i', 1...]	
 				qui matrix score double `x_var' = `coef_mat' if e(sample)						
 				if( "`e(clustvar)'"=="") {
-					qui gen double `xs_var'=sign(`x_var') if e(sample)				
+					qui gen double `xs_var' = cond(missing(`x_var'), ., cond(`x_var' < 0, -1, 1)) if e(sample)
 					if ("`e(cmd)'"=="ivregress") {
-						mata set_Wx_iv_nocluster("`iv_u_vars'", "`iv_v_vars'", "`ess'", "`weight_before'", "`weight_after'")
+						mata set_Wx_iv_nocluster("`iv_u_vars'", "`iv_z_vars'", "`ess'", "`weight_before'", "`weight_after'")
 					}
 					else {
 						mata set_Wx_nocluster("`clist'", "`scpc_sel'", "`weight_before'", "`weight_after'", "`r_var'", "`rx_var'", "`wx_hold'")
 					}
 				}
 				else{
-					qui by `e(clustvar)': egen double `xs_var'=total(`x_var'*`x_var') if e(sample)
-					qui replace `xs_var'=`x_var'/sqrt(`xs_var') if e(sample) & `xs_var'>0
+					tempvar abs_score score_scale scaled_score
+					quietly generate double `abs_score' = abs(`x_var') if e(sample)
+					quietly by `e(clustvar)': egen double `score_scale' = max(`abs_score') if e(sample)
+					quietly generate double `scaled_score' = cond(`score_scale' == 0, 0, `x_var' / `score_scale') if e(sample)
+					quietly by `e(clustvar)': egen double `xs_var' = total(`scaled_score'^2) if e(sample)
+					quietly replace `xs_var' = `scaled_score' / sqrt(`xs_var') if e(sample) & `xs_var' > 0
+					drop `abs_score' `score_scale' `scaled_score'
 					if ("`e(cmd)'"=="ivregress") {
-						mata set_Wx_iv_cluster("`iv_u_vars'", "`iv_v_vars'", "`ess'", "`cl_idx_fb'", "`weight_before'", "`weight_after'")
+						mata set_Wx_iv_cluster("`iv_u_vars'", "`iv_z_vars'", "`ess'", "`cl_idx_fb'", "`weight_before'", "`weight_after'")
 					}
 					else {
 						mata set_Wx_cluster("`clist'", "`scpc_sel'", "`weight_before'", "`weight_after'", "`r_var'", "`rx_var'", "`wx_hold'")
@@ -1877,6 +1939,7 @@ program scpc, eclass sortpreserve
 	ereturn scalar seed = `seed'
 	ereturn local method "`method_used'"
 	ereturn local backend "`backend_used'"
+	ereturn local backend_reason "`backend_reason'"
 end
 
 

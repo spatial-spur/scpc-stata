@@ -12,7 +12,7 @@
 {cmd:scpc} [{cmd:,} {it:options}]
 {p_end}
 
-{synoptset 11}{...}
+{synoptset 26}{...}
 {synopthdr}
 {synoptline}
 {synopt :{opt avc(#)}}overrides default value of 0.03 for the maximal average pairwise correlation (must be between 0.001 and 0.99){p_end}
@@ -20,6 +20,11 @@
 {synopt :{opt latlong}}if present, expects s_1 to contain latitude and s_2 to be longitude and uses implied great-circle distance; if not present, computes Euclidian distance between coordinates defines by s_* variables{p_end}
 {synopt :{opt k(#)}}overrides default value of 10 for the number of coefficients SCPC t-statistics are computed for{p_end}
 {synopt :{opt cvs}}prints a table of two-sided critical values of SCPC t-statistic of level 32%, 10%, 5% and 1%{p_end}
+{synopt :{opt backend(auto|rust|fallback)}}choose the computational backend. {opt auto} uses the matching Rust plugin when available and Mata otherwise. {opt rust} requires the matching plugin. Set the default with {cmd:SPATIAL_BACKEND} as a Stata global or environment variable.{p_end}
+{synopt :{opt nthreads(#)}}set the number of Rust threads. {opt nthreads(1)} runs Rust with one thread.{p_end}
+{synopt :{opt exact}}use exact SCPC.{p_end}
+{synopt :{opt approx}}use the Nyström approximation.{p_end}
+{synopt :{opt seed(#)}}set the seed for the Nyström approximation. Default is {opt seed(1)}.{p_end}
 {synoptline}
 {p2colreset}{...}
 
@@ -30,14 +35,14 @@
 {pstd}
 This Stata package implements the Spatial Correlation Principal Components (SCPC) method described in {help scpc##mainpaper:Müller and Watson (2022, 2023)} for the construction of confidence intervals that account for many forms of spatial correlation.
 The {it:scpc} command expects the locations of the observations to be stored in the variables s_*. If the option {it:latlong} is present, then s_1 is interpreted as the latitude, and s_2 as the longitude of the observation, and distances between observations are computed with the great-circle formula. If the option {it:latlong} is not present, then all {it:p} variables beginning with s_ are interpreted as points in {it:p}-dimensional space, and distances are computed with the Euclidian norm. 
-scpc is implemented as a postestimation command that can be used after the Stata commands {manhelp regress R:regress}, {manhelp ivregress R:ivregress}, {manhelp areg R:areg}, {manhelp logit R:logit} or {manhelp probit R:probit},
-as long as these are used with the standard error option {it:robust} or {it:cluster} (see {manhelp vce_option R:vce option}). If the estimation uses the {it:cluster} option, 
+scpc is implemented as a postestimation command that can be used after the unweighted Stata commands {manhelp regress R:regress}, {manhelp ivregress R:ivregress}, {manhelp areg R:areg}, {manhelp logit R:logit} or {manhelp probit R:probit},
+as long as these are used with the standard error option {it:robust} or {it:cluster} (see {manhelp vce_option R:vce option}). If the estimation uses the {it:cluster} option,
 then {it:scpc} corrects for spatial correlations between clusters, assuming that all observations within a cluster share the same location.
-Also by default, scpc computes conditional critical values described in Müller and Watson (2023). These critical values are adjusted based on the realized values of the regressors, and is implemented only for {manhelp regress R:regress} and {manhelp ivregress R:ivregress}. Standard (unconditional) SCPC inference can be obtained via the {it:uncond} option, which is necessary when using scpc after {manhelp areg R:areg}, {manhelp logit R:logit} or {manhelp probit R:probit}.
+By default, {cmd:scpc} computes critical values conditional on the realized regressors, as described in Müller and Watson (2023). Conditional inference supports {manhelp regress R:regress} and {cmd:ivregress 2sls}. Use {it:uncond} for unconditional critical values after {manhelp areg R:areg}, {manhelp logit R:logit}, or {manhelp probit R:probit}. After {cmd:ivregress liml}, use {it:uncond} with the Mata backend.
 By default, {it:scpc} conducts spatially robust inference under the assumption that the largest average pairwise correlation between the observations / clusters is no larger than 0.03. This default can be overridden by the
 {it:avc} option. Note that computation times increase for smaller values of {it:avc}. To make the algorithm faster, SCPC inference is computed only for the first 10 coefficients. This can be changed by the {it:k} option. 
-The underlying algorithm can also handle large datasets; internally, a different algorithm is used when the number of observations / clusters exceeds 4500. Computing time is appproximately linear in the number of observations, and is roughtly one minute for 5000 observations.
-Note: The implementation generates and deletes variables with names starting with scpc_*, so variables of that name in the original data set are corrupted/deleted.
+By default, SCPC uses the Nyström approximation for 4,500 or more locations. A sampled covariance that fails the positive semidefinite check produces an error. {opt exact} uses the full covariance grid.
+
  
 
 {marker options}{...}
@@ -47,16 +52,31 @@ Note: The implementation generates and deletes variables with names starting wit
 {opt avc(#)} overrides default value of 0.03 for the maximal average pairwise correlation; see {help scpc##mainpaper:Müller and Watson (2021)} for details.
 
 {phang}
-{opt avc(#)} overrides default of computing conditional critical value in regression; see {help scpc##mainpaper:Müller and Watson (2021)} for details.
+{opt uncond} overrides the default of computing conditional critical values in regression; see {help scpc##mainpaper:Müller and Watson (2021)} for details.
 
 {phang}
 {opt latlong} if present, expects s_1 to contain latitude and s_2 to be longitude and uses implied great-circle distance; if not present, computes Euclidian distance between coordinates defines by variables beginning with "s_".
 
 {phang} 
-{opt cvs} prints a table of one- and two-sided critical values of SCPC t-statistic of level 32%, 10%, 5% and 1%.
+{opt cvs} prints a table of two-sided critical values of SCPC t-statistic of level 32%, 10%, 5% and 1%.
 
 {phang} 
 {opt k(#)} overrides default value of 10 for the number of coefficients for which SCPC inference is computed.
+
+{phang}
+{opt backend(auto|rust|fallback)} selects the computational backend. {opt auto} uses the matching Rust plugin when eligible and falls back to Mata otherwise. {opt rust} requires the matching plugin. {opt fallback} runs in Mata. The Stata global or environment variable {cmd:SPATIAL_BACKEND} sets the default when present. Restart Stata after replacing an incompatible plugin that was already loaded.
+
+{phang}
+{opt nthreads(#)} sets the number of threads used by the Rust backend.
+
+{phang}
+{opt exact} forces exact SCPC regardless of sample size.
+
+{phang}
+{opt approx} uses the Nyström approximation. An indefinite sampled covariance raises an error rather than falling back.
+
+{phang}
+{opt seed(#)} sets the nonnegative 32-bit integer seed used by the Nyström approximation (default {cmd:1}).
 
 {marker examples}{...}
 {title:Examples}
@@ -84,6 +104,17 @@ Note: The implementation generates and deletes variables with names starting wit
 {p2col 5 15 19 2: Matrices}{p_end}
 {synopt:{cmd:e(scpcstats)}}Matrix of SCPC inference results (same as printed table){p_end}
 {synopt:{cmd:e(scpccvs)}}Matrix of SCPC critical values (same as printed table, only computed under {it:cvs} option){p_end}
+
+{p2col 5 15 19 2: Macros}{p_end}
+{synopt:{cmd:e(backend)}}computational backend used{p_end}
+{synopt:{cmd:e(backend_reason)}}reason for using Mata, when applicable{p_end}
+{synopt:{cmd:e(method)}}exact or approximate SCPC{p_end}
+{p2col 5 15 19 2: Scalars}{p_end}
+{synopt:{cmd:e(q)}}number of selected low-frequency spatial cosine/eigenvector averages{p_end}
+{synopt:{cmd:e(c0)}}calibrated kernel scale parameter corresponding to {opt avc}{p_end}
+{synopt:{cmd:e(cv)}}95% SCPC critical value used for confidence intervals{p_end}
+{synopt:{cmd:e(seed)}}seed recorded for the SCPC run{p_end}
+{synopt:{cmd:e(tied)}}indicator of a tied eigenspace reported by Rust{p_end}
 {p2colreset}{...}
 
 {pstd}

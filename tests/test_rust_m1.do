@@ -2,7 +2,9 @@ clear all
 set more off
 version 14
 
-local repo_root "/Users/pauldavidboll/Github/spatial-spur"
+// Run from the shared workspace root or pass its path as the first argument.
+args repo_root
+if `"`repo_root'"' == "" local repo_root "."
 adopath ++ "`repo_root'/scpc-stata/src"
 
 // Helper to compare Rust vs Fallback outputs within 1e-10
@@ -63,6 +65,7 @@ program _test_ping_plug, plugin using("scpc_rust.plugin")
 plugin call _test_ping_plug, ping
 plugin call _test_ping_plug, ping_v2
 plugin call _test_ping_plug, ping_v3
+plugin call _test_ping_plug, ping_v6
 program drop _test_ping_plug
 
 import delimited "`repo_root'/verification/data/bench_200.csv", clear
@@ -239,6 +242,7 @@ scpc, uncond
 assert "`e(backend)'" == "rust"
 check_rust_vs_fallback, uncond cvs
 check_rust_vs_fallback, cvs
+rename (s_1 s_2) (s_2 s_1)
 check_rust_vs_fallback, latlong cvs
 regress y x1 x2, cluster(cluster_id) noconstant
 check_rust_vs_fallback, cvs
@@ -251,6 +255,7 @@ scpc
 assert "`e(backend)'" == "rust"
 check_rust_vs_fallback, cvs
 check_rust_vs_fallback, uncond cvs
+rename (s_1 s_2) (s_2 s_1)
 check_rust_vs_fallback, latlong cvs
 ivregress 2sls y x2 (x1 = z1), noconstant robust
 check_rust_vs_fallback, cvs
@@ -269,6 +274,7 @@ scpc
 assert "`e(backend)'" == "rust"
 check_rust_vs_fallback, cvs
 check_rust_vs_fallback, uncond cvs
+rename (s_1 s_2) (s_2 s_1)
 check_rust_vs_fallback, latlong cvs
 
 // 7b3: clustered areg with uncond runs on Rust (and conditional areg aborts)
@@ -284,6 +290,7 @@ areg y x1 x2, absorb(cluster_id) robust
 scpc, uncond
 assert "`e(backend)'" == "rust"
 check_rust_vs_fallback, uncond cvs
+rename (s_1 s_2) (s_2 s_1)
 check_rust_vs_fallback, uncond latlong cvs
 capture scpc, backend(rust)
 assert _rc == 198
@@ -318,7 +325,7 @@ assert _rc == 198
 // 7f: Missing plugin behavior in isolated ado directory
 clear all
 tempfile tmpado
-local tmpdir "/tmp/scpc_no_plug_test"
+local tmpdir "`tmpado'_no_plugin"
 shell mkdir -p "`tmpdir'"
 copy "`repo_root'/scpc-stata/src/scpc.ado" "`tmpdir'/scpc.ado", replace
 adopath - "`repo_root'/scpc-stata/src"
@@ -331,7 +338,8 @@ assert "`e(backend)'" == "fallback"
 capture scpc, backend(rust)
 assert _rc == 198
 capture adopath - "`tmpdir'"
-shell rm -rf "`tmpdir'"
+erase "`tmpdir'/scpc.ado"
+shell rmdir "`tmpdir'"
 adopath ++ "`repo_root'/scpc-stata/src"
 
 // Re-define check_rust_vs_fallback after Test 7f's clear all
@@ -701,7 +709,7 @@ assert _rc == 999
 capture scpc, backend(fallback)
 assert _rc == 999
 capture scpc, backend(rust)
-assert _rc == 198
+assert _rc == 999
 
 gen double s_1 = x2
 capture scpc
@@ -709,7 +717,7 @@ assert _rc == 999
 capture scpc, backend(fallback)
 assert _rc == 999
 capture scpc, backend(rust)
-assert _rc == 198
+assert _rc == 999
 
 // 9b: Tied eigenspace automatic fallback on first 20 rows of bench_200.csv
 import delimited "`repo_root'/verification/data/bench_200.csv", clear
@@ -720,8 +728,9 @@ regress y x1 x2, robust
 
 scpc, cvs
 assert "`e(backend)'" == "fallback"
+assert "`e(backend_reason)'" == "tied eigenspace"
 assert e(q) == 7
-assert e(tied) == 0
+assert e(tied) == 1
 tempname auto_stats auto_cvs
 matrix `auto_stats' = e(scpcstats)
 matrix `auto_cvs' = e(scpccvs)
@@ -751,8 +760,9 @@ preserve
 regress y x1 x2 if _n <= 20, robust
 scpc
 assert "`e(backend)'" == "fallback"
+assert "`e(backend_reason)'" == "tied eigenspace"
 assert e(q) == 7
-assert e(tied) == 0
+assert e(tied) == 1
 restore
 
 // Subsequent untied call clears e(tied) back to 0
@@ -838,6 +848,24 @@ assert "`e(backend)'" == "rust"
 assert e(tied) == 0
 restore
 
+// Weighted estimation is rejected across all weight types (including constant weights) and backends
+gen double w_vary = 1 + 0.1 * mod(_n, 3)
+gen byte w_one = 1
+foreach wspec in "[aw=w_vary]" "[pw=w_vary]" "[iw=w_vary]" "[fw=w_one]" "[aw=w_one]" {
+    if "`wspec'" == "[fw=w_one]" | "`wspec'" == "[aw=w_one]" | "`wspec'" == "[iw=w_vary]" {
+        regress y x1 x2 `wspec', robust
+    }
+    else {
+        regress y x1 x2 `wspec'
+    }
+    foreach bk in rust auto fallback {
+        capture scpc, backend(`bk')
+        assert _rc == 198
+        capture scpc, uncond backend(`bk')
+        assert _rc == 198
+    }
+}
+
 // Logit still rejects on Rust and aborts on conditional fallback
 gen byte y_bin = (y > 0)
 logit y_bin x1 x2, robust
@@ -858,6 +886,7 @@ assert "`e(method)'" == "approx"
 assert e(seed) == 7
 check_rust_vs_fallback, avc(0.05) approx seed(7) uncond cvs
 assert "`e(method)'" == "approx"
+rename (s_1 s_2) (s_2 s_1)
 check_rust_vs_fallback, avc(0.05) approx seed(7) latlong cvs
 assert "`e(method)'" == "approx"
 check_rust_vs_fallback, avc(0.05) approx seed(7) latlong uncond cvs
