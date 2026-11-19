@@ -38,12 +38,16 @@ assert abs(cv[1,3] - 9.973326) < .002
 generate double z = x + .01*s_1
 foreach cons in constant noconstant {
     local opt = cond("`cons'" == "noconstant", "noconstant", "")
+    local iv_ref = cond("`cons'" == "noconstant", 9.798657, 17.432446)
     quietly ivregress 2sls y (x=z), vce(robust) `opt'
     quietly scpc, avc(.5) k(1) cvs backend(fallback)
     matrix fallback_cv = e(scpccvs)
+    assert abs(fallback_cv[1,3] - `iv_ref') < .002
     quietly ivregress 2sls y (x=z), vce(robust) `opt'
     quietly scpc, avc(.5) k(1) cvs backend(rust)
+    assert "`e(backend)'" == "rust"
     matrix native_cv = e(scpccvs)
+    assert abs(native_cv[1,3] - `iv_ref') < .002
     mata: assert(max(abs(st_matrix("fallback_cv") - st_matrix("native_cv"))) < 1e-8)
 }
 
@@ -54,9 +58,12 @@ replace z = x + .01*s_1
 quietly ivregress 2sls y (x=z), vce(cluster s_1)
 quietly scpc, avc(.5) k(1) cvs backend(fallback)
 matrix fallback_cv = e(scpccvs)
+assert abs(fallback_cv[1,3] - 17.178540) < .002
 quietly ivregress 2sls y (x=z), vce(cluster s_1)
 quietly scpc, avc(.5) k(1) cvs backend(rust)
+assert "`e(backend)'" == "rust"
 matrix native_cv = e(scpccvs)
+assert abs(native_cv[1,3] - 17.178540) < .002
 mata: assert(max(abs(st_matrix("fallback_cv") - st_matrix("native_cv"))) < 1e-8)
 
 quietly regress y x, vce(cluster s_1)
