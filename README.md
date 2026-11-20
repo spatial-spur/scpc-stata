@@ -11,6 +11,9 @@ Run this in Stata with the absolute path to this checkout.
 net install scpc, replace from("/path/to/spatial-spur/scpc-stata/src")
 ```
 
+The Rust plugins use OxiBLAS through the shared Rust core.
+The [OxiBLAS license](src/scpc-oxiblas-license.txt) is included in the installation.
+
 The development checkout bundles a plugin for Apple Silicon, tested with
 StataNow 19.5. `net install` installs the plugin on Apple Silicon and the
 Mata implementation on all platforms. For a source build, run
