@@ -19,8 +19,9 @@ StataNow 19.5. `net install` installs the plugin on Apple Silicon and the
 Mata implementation on all platforms. For a source build, run
 `make -C spatial-rust/crates/spatial-stata` from the shared workspace after
 fetching the locked Cargo dependencies. The Makefile supports macOS and Linux.
-Set `SPATIAL_SME2=1` when running `make` to include OxiBLAS's optional SME2
-kernels, which activate on supported hardware. SME2 is off in the standard build.
+OxiBLAS selects SME2 at runtime when its hardware and operating-system checks
+pass. Set `OXIBLAS_DISABLE_SME2=1` in the environment before starting Stata to
+opt out.
 Use `adopath ++` with the `scpc-stata/src` directory to load your locally built
 plugin from the checkout. Restart Stata after replacing a plugin. Use
 `scpc, backend(fallback)` to select the Mata implementation directly.
