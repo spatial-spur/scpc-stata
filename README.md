@@ -11,17 +11,21 @@ Run this in Stata with the absolute path to this checkout.
 net install scpc, replace from("/path/to/spatial-spur/scpc-stata/src")
 ```
 
-The checked-in development plugin targets macOS arm64 and was tested with
-StataNow 19.5. Build the plugin for your machine from a checkout of the shared
-Rust workspace. From the parent directory containing both packages, run
-`make -C spatial-rust/crates/spatial-stata` after fetching the locked Cargo
-dependencies. The Makefile has macOS and Linux targets. Restart Stata after
-replacing a plugin. Use `scpc, backend(fallback)` to select the Mata
-implementation directly. The default `backend(auto)` uses Mata if the matching
+The development checkout bundles a plugin for Apple Silicon, tested with
+StataNow 19.5. `net install` installs the plugin on Apple Silicon and the
+Mata implementation on all platforms. For a source build, run
+`make -C spatial-rust/crates/spatial-stata` from the shared workspace after
+fetching the locked Cargo dependencies. The Makefile supports macOS and Linux.
+Use `adopath ++` with the `scpc-stata/src` directory to load your locally built
+plugin from the checkout. Restart Stata after replacing a plugin. Use
+`scpc, backend(fallback)` to select the Mata implementation directly.
+The default `backend(auto)` uses Mata if the matching
 plugin cannot load. Check `e(backend)` and `e(backend_reason)` after the call.
 
 Conditional inference supports unweighted `regress` and `ivregress 2sls`
-fits. For `ivregress liml`, use `scpc, uncond backend(fallback)`.
+fits. For 2SLS, `k()` counts estimable coefficients. Conditional 2SLS with
+active factor or time-series terms uses Mata. For `ivregress liml`,
+use `scpc, uncond backend(fallback)`.
 
 # References
 

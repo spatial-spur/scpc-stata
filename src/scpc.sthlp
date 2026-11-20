@@ -39,6 +39,7 @@ scpc is implemented as a postestimation command that can be used after the unwei
 as long as these are used with the standard error option {it:robust} or {it:cluster} (see {manhelp vce_option R:vce option}). If the estimation uses the {it:cluster} option,
 then {it:scpc} corrects for spatial correlations between clusters, assuming that all observations within a cluster share the same location.
 By default, {cmd:scpc} computes critical values conditional on the realized regressors, as described in Müller and Watson (2023). Conditional inference supports {manhelp regress R:regress} and {cmd:ivregress 2sls}. Use {it:uncond} for unconditional critical values after {manhelp areg R:areg}, {manhelp logit R:logit}, or {manhelp probit R:probit}. After {cmd:ivregress liml}, use {it:uncond} with the Mata backend.
+Conditional 2SLS with active factor or time-series terms uses the Mata backend.
 By default, {it:scpc} conducts spatially robust inference under the assumption that the largest average pairwise correlation between the observations / clusters is no larger than 0.03. This default can be overridden by the
 {it:avc} option. Note that computation times increase for smaller values of {it:avc}. To make the algorithm faster, SCPC inference is computed only for the first 10 coefficients. This can be changed by the {it:k} option. 
 By default, SCPC uses the Nyström approximation for 4,500 or more locations. A sampled covariance that fails the positive semidefinite check produces an error. {opt exact} uses the full covariance grid.
@@ -62,6 +63,7 @@ By default, SCPC uses the Nyström approximation for 4,500 or more locations. A 
 
 {phang} 
 {opt k(#)} overrides default value of 10 for the number of coefficients for which SCPC inference is computed.
+After {cmd:ivregress 2sls}, omitted coefficients are excluded from this count.
 
 {phang}
 {opt backend(auto|rust|fallback)} selects the computational backend. {opt auto} uses the matching Rust plugin when eligible and falls back to Mata otherwise. {opt rust} requires the matching plugin. {opt fallback} runs in Mata. The Stata global or environment variable {cmd:SPATIAL_BACKEND} sets the default when present. Restart Stata after replacing an incompatible plugin that was already loaded.

@@ -1049,12 +1049,42 @@ void scpc_iv_rank_error()
 	exit(999)
 }
 
+real matrix scpc_iv_instrument_basis(real matrix Z)
+{
+	real matrix Qz
+	real colvector v, q
+	real scalar rank, j, pass, prev, scale, vnorm
+
+	// Match the native adapter's normalized, two-pass Gram-Schmidt rank rule.
+	Qz = J(rows(Z), min((rows(Z), cols(Z))), 0)
+	rank = 0
+	for (j = 1; j <= cols(Z) & rank < rows(Z); j++) {
+		v = Z[., j]
+		scale = max(abs(v))
+		if (scale == 0) continue
+		v = v / scale
+		v = v / norm(v)
+		for (pass = 1; pass <= 2; pass++) {
+			for (prev = 1; prev <= rank; prev++) {
+				q = Qz[., prev]
+				v = v - q * cross(q, v)
+			}
+		}
+		vnorm = norm(v)
+		if (vnorm > 1e-10) {
+			rank++
+			Qz[., rank] = v / vnorm
+		}
+	}
+	return(rank == 0 ? J(rows(Z), 0, 0) : Qz[., 1..rank])
+}
+
 real matrix scpc_iv_projector(real matrix X, real matrix Z)
 {
-	real rowvector scale, instrument_scale
-	real matrix Qz, U, Vt
+	real rowvector scale
+	real matrix Qz, U, Vt, V
 	real colvector s
-	real scalar p, rank
+	real scalar p
 
 	p = cols(X)
 	if (p == 0 | cols(Z) < p | rows(X) < p | rows(X) != rows(Z) |
@@ -1065,25 +1095,34 @@ real matrix scpc_iv_projector(real matrix X, real matrix Z)
 	if (any(scale :== 0)) scpc_iv_rank_error()
 	X = X :/ scale
 
-	instrument_scale = colmax(abs(Z))
-	Z = Z :/ (instrument_scale :+ (instrument_scale :== 0))
-	if (cols(Z) > rows(Z)) {
-		svd(Z', U = ., s = ., Vt = .)
-		Qz = Vt'
-	}
-	else {
-		svd(Z, Qz = ., s = ., Vt = .)
-	}
-	if (hasmissing(s)) scpc_iv_rank_error()
-	rank = sum(s :> 1e-10 * max(s))
-	if (rank < p) scpc_iv_rank_error()
-	Qz = Qz[., 1..rank]
+	Qz = scpc_iv_instrument_basis(Z)
+	if (cols(Qz) < p) scpc_iv_rank_error()
 
-	// Work in the instrument span so nearly singular directions cannot
-	// amplify components outside that span when forming the dual factor.
+	// X is already equilibrated. A relative test on Qz'X alone can
+	// accept a whole projected design made up of roundoff directions.
 	svd(cross(Qz, X), U = ., s = ., Vt = .)
-	if (hasmissing(s) | min(s) <= 1e-10 * max(s)) scpc_iv_rank_error()
-	return(Qz * ((U :/ s') * Vt))
+	if (hasmissing(s) | min(s) <= 1e-10 * max((1, max(s)))) scpc_iv_rank_error()
+	V = Qz * ((U :/ s') * Vt)
+	if (hasmissing(V)) scpc_iv_rank_error()
+	return(V)
+}
+
+// Compact 2SLS coefficient matrices without losing factor/time-series names.
+void scpc_select_iv_columns(string scalar b, string scalar bread, string scalar columns)
+{
+	real rowvector keep
+	real matrix coefficients, covariance
+	string matrix stripes
+
+	keep = strtoreal(tokens(columns))
+	coefficients = st_matrix(b)
+	covariance = st_matrix(bread)
+	stripes = st_matrixcolstripe(b)
+	st_matrix(b, coefficients[., keep])
+	st_matrixcolstripe(b, stripes[keep, .])
+	st_matrix(bread, covariance[keep, keep])
+	st_matrixrowstripe(bread, stripes[keep, .])
+	st_matrixcolstripe(bread, stripes[keep, .])
 }
 
 void set_Wx_iv_nocluster(string scalar u_vars, string scalar z_vars,
@@ -1212,7 +1251,7 @@ end
 
 capture program drop scpc_setscores
 program scpc_setscores
-	syntax, scpc_sel(name) score_vars(string) bread(name)
+	syntax, scpc_sel(name) score_vars(string) bread(name) [IVColumns(string)]
 	tempvar e
 	local slist ""
 	quietly{
@@ -1255,23 +1294,35 @@ program scpc_setscores
 	}
 	else if(e(cmd)=="ivregress"){
 		tempvar stata_scr
-		predict double `stata_scr'*,sc
-		
-		local j=`: word count `e(instd)''+1
-		local na : colnames e(V)
-		local ncol_v : word count `na'
-		if (`ncol_v' >= `j') {
-			gen double `e'=`stata_scr'`j'
+		predict double `stata_scr'* if e(sample), scores
+		predict double `e' if e(sample), residuals
+
+		local instd `"`e(instd)'"'
+		local instd : subinstr local instd "bn." ".", all
+		local na : colnames e(b)
+		if "`ivcolumns'" == "" {
+			local n_b : word count `na'
+			forvalues j = 1/`n_b' {
+				local ivcolumns "`ivcolumns' `j'"
+			}
 		}
-		tokenize `na'
 		local i = 1
-		while "``i''" != "" {
+		foreach j of local ivcolumns {
+			local term : word `j' of `na'
 			local score_i : word `i' of `score_vars'
+			// e(b) can mark an active factor level with bn. while e(instd) uses .
+			local key : subinstr local term "bn." ".", all
+			local score_pos : list posof "`key'" in instd
 			capture drop `score_i'
-			if (`i'<`j') gen double `score_i'=`stata_scr'`i' if e(sample)
-			else{
-				if("``i''"=="_cons") gen double `score_i'=`e' if e(sample)
-				else gen double `score_i'=`e'*``i'' if e(sample)
+			if `score_pos' > 0 {
+				gen double `score_i' = `stata_scr'`score_pos' if e(sample)
+			}
+			else if "`term'" == "_cons" {
+				gen double `score_i' = `e' if e(sample)
+			}
+			else {
+				quietly fvrevar `term' if e(sample)
+				gen double `score_i' = `e' * `r(varlist)' if e(sample)
 			}
 			local slist "`slist' `score_i'"
 			local ++i
@@ -1289,13 +1340,10 @@ program scpc_setscores
 		tempvar TotScore score_sort_sample
 		gen byte `score_sort_sample' = !e(sample)
 		sort `e(clustvar)' `score_sort_sample'
-		local i = 1
-		while "``i''" != ""{
-			local score_i : word `i' of `score_vars'
+		foreach score_i of local score_vars {
 			capture drop `TotScore'
 			by `e(clustvar)': egen double `TotScore'=total(`score_i') if e(sample)
 			replace `score_i'=`TotScore'
-			local ++i
 		}
 		by `e(clustvar)': replace `scpc_sel' = 1 if _n==1 & e(sample)
 	}
@@ -1371,8 +1419,33 @@ program scpc, eclass sortpreserve
 		exit 198
 	}
 
-	tempname scpc_Bread
-	matrix `scpc_Bread'=e(V_modelbased)
+	tempname b_input bread_input scpc_Bread
+	matrix `b_input' = e(b)
+	matrix `bread_input' = e(V_modelbased)
+	local iv_score_options ""
+	if "`e(cmd)'" == "ivregress" & "`e(estimator)'" == "2sls" {
+		local n_coefficients = colsof(`b_input')
+		if rowsof(`bread_input') != `n_coefficients' | colsof(`bread_input') != `n_coefficients' {
+			di as error "e(b) and e(V_modelbased) dimensions do not match"
+			exit 198
+		}
+		tempname omitted
+		quietly _ms_omit_info `b_input'
+		matrix `omitted' = r(omit)
+		local iv_columns ""
+		forvalues j = 1/`n_coefficients' {
+			if `omitted'[1, `j'] == 0 & !(`b_input'[1, `j'] == 0 & `bread_input'[`j', `j'] == 0) {
+				local iv_columns "`iv_columns' `j'"
+			}
+		}
+		if trim("`iv_columns'") == "" {
+			di as error "SCPC requires at least one estimable IV coefficient"
+			exit 198
+		}
+		mata scpc_select_iv_columns("`b_input'", "`bread_input'", "`iv_columns'")
+		local iv_score_options ivcolumns("`iv_columns'")
+	}
+	matrix `scpc_Bread' = `bread_input'
 	if( `scpc_Bread'[1,1]==.) {
 		disp as text "e(V_modelbased) missing; aborting"
 		exit(999)
@@ -1546,8 +1619,8 @@ program scpc, eclass sortpreserve
 
 		if `rust_eligible' == 1 {
 			tempname b_full bread_full
-			matrix `b_full' = e(b)
-			matrix `bread_full' = e(V_modelbased)
+			matrix `b_full' = `b_input'
+			matrix `bread_full' = `bread_input'
 			local p = colsof(`b_full')
 			if rowsof(`bread_full') != `p' | colsof(`bread_full') != `p' {
 				local rust_eligible 0
@@ -1564,6 +1637,11 @@ program scpc, eclass sortpreserve
 						local rust_reason "missing entries in e(b) or e(V_modelbased)"
 						continue, break
 					}
+					if `bread_full'[`j', `j'] <= 0 {
+						local rust_eligible 0
+						local rust_reason "collinear or dropped regressor '`colname'' detected"
+						continue, break
+					}
 					if "`colname'" == "_cons" {
 						if `j' != `p' {
 							local rust_eligible 0
@@ -1575,18 +1653,13 @@ program scpc, eclass sortpreserve
 					else {
 						if strpos("`colname'", ".") > 0 | strpos("`colname'", "#") > 0 {
 							local rust_eligible 0
-							local rust_reason "omitted, factor, or interaction terms (`colname') are not supported in Rust backend"
+							local rust_reason "factor, interaction, or time-series term (`colname') is not supported in Rust backend"
 							continue, break
 						}
 						capture confirm numeric variable `colname', exact
 						if _rc != 0 {
 							local rust_eligible 0
 							local rust_reason "regressor '`colname'' is not a numeric variable"
-							continue, break
-						}
-						if `bread_full'[`j', `j'] <= 0 {
-							local rust_eligible 0
-							local rust_reason "collinear or dropped regressor '`colname'' detected"
 							continue, break
 						}
 						local xvars "`xvars' `colname'"
@@ -1597,7 +1670,13 @@ program scpc, eclass sortpreserve
 
 		if `rust_eligible' == 1 & `is_iv' == 1 & "`uncond'" == "" {
 			local instd_list `"`e(instd)'"'
-			local insts_list `"`e(insts)'"'
+			local instd_list : list instd_list & xvars
+			local instrument_terms `"`e(insts)'"'
+			local insts_list ""
+			foreach term of local instrument_terms {
+				quietly _ms_parse_parts `term'
+				if r(omit) == 0 local insts_list "`insts_list' `term'"
+			}
 			local n_endog : word count `instd_list'
 			local nx_count : word count `xvars'
 			if `n_endog' < 1 | `n_endog' > `nx_count' {
@@ -1634,7 +1713,7 @@ program scpc, eclass sortpreserve
 				foreach zname of local z_excl_vars {
 					if strpos("`zname'", ".") > 0 | strpos("`zname'", "#") > 0 {
 						local rust_eligible 0
-						local rust_reason "omitted, factor, or interaction instrument (`zname') is not supported in Rust backend"
+						local rust_reason "factor, interaction, or time-series instrument (`zname') is not supported in Rust backend"
 						continue, break
 					}
 					capture confirm numeric variable `zname', exact
@@ -1680,7 +1759,7 @@ program scpc, eclass sortpreserve
 		local score_vars "`score_vars' `score_`j''"
 	}
 	tempvar scpc_sel
-	scpc_setscores, scpc_sel(`scpc_sel') score_vars("`score_vars'") bread(`scpc_Bread')
+	scpc_setscores, scpc_sel(`scpc_sel') score_vars("`score_vars'") bread(`scpc_Bread') `iv_score_options'
 
 	local tied_val 0
 	if `use_rust' == 1 {
@@ -1763,8 +1842,8 @@ program scpc, eclass sortpreserve
 		tempname neff b_mat scpc_Bread0 scpctab scpc_cvs coef_mat stats_row cvs_row oreg_hold wx_hold
 		tempvar x_var xs_var r_var rx_var
 		matrix `neff'=r(sum)
-		matrix `b_mat'=e(b)	
-		matrix `scpc_Bread0'=e(V_modelbased)
+		matrix `b_mat'=`b_input'
+		matrix `scpc_Bread0'=`bread_input'
 		local clist 
 		local weight_before `xs_var'
 		local weight_after `x_var'
@@ -1795,51 +1874,56 @@ program scpc, eclass sortpreserve
 			local weight_before `x_var'
 			local weight_after `xs_var'
 			local elist `e(insts)'
-			local i=`: word count `e(instd)''+1
-			
-			tempvar ess one_iv cl_idx_fb
+			local instd `e(instd)'
+			local instd : subinstr local instd "bn." ".", all
+
+			tempvar ess one_iv cl_idx_fb cluster_order
 			qui gen byte `ess' = e(sample)
 			qui gen double `one_iv' = 1 if `ess'
-			if "`e(clustvar)'" != "" {
-				qui gen double `cl_idx_fb' = sum(`scpc_sel') if e(sample)
+			local timevar : char _dta[_TStvar]
+			if `has_cluster' & "`timevar'" != "" {
+				// fvrevar needs time order to materialize lags; preserve the cluster order.
+				local panelvar : char _dta[_TSpanel]
+				quietly generate long `cluster_order' = _n
+				sort `panelvar' `timevar'
 			}
+			quietly fvrevar `elist' if `ess'
+			local iv_z_vars "`r(varlist)'"
+			local has_cons_iv : list posof "_cons" in na
+			if `has_cons_iv' > 0 {
+				local iv_z_vars "`iv_z_vars' `one_iv'"
+			}
+
 			_estimates hold `oreg_hold', restore
 			local clist
 			local iv_u_vars
-			local has_cons_iv : list posof "_cons" in na
-			quietly fvrevar `elist' if `ess'
-			local iv_z_vars "`r(varlist)'"
-			local reg_cons_opt ""
-			if `has_cons_iv' == 0 {
-				local reg_cons_opt ", noconstant"
-			}
-			else {
-				local iv_z_vars "`iv_z_vars' `one_iv'"
-			}
-			tokenize `na'
-			forval j = 1/`= colsof(`b_mat')' {
-				if(`j'<`i'){
-					tempvar fs_`j'
-					qui reg ``j'' `elist' if `ess'`reg_cons_opt'
-					qui predict double `fs_`j'', xb
-					qui replace `fs_`j''=. if !`ess'
-					local clist `clist' `fs_`j''
-					local iv_u_vars `iv_u_vars' ``j''
+			foreach term of local na {
+				if "`term'" == "_cons" {
+					local rv "`one_iv'"
 				}
-				else{
-					local clist `clist' ``j''
-					if "``j''" == "_cons" {
-						local iv_u_vars `iv_u_vars' `one_iv'
-					}
-					else if !(`b_mat'[1, `j'] == 0 & `scpc_Bread0'[`j', `j'] == 0) {
-						qui fvrevar ``j'' if `ess'
-						local rv "`r(varlist)'"
-						local iv_u_vars `iv_u_vars' `rv'
-					}
+				else {
+					quietly fvrevar `term' if `ess'
+					local rv "`r(varlist)'"
+				}
+				local iv_u_vars "`iv_u_vars' `rv'"
+				local key : subinstr local term "bn." ".", all
+				local is_endog : list posof "`key'" in instd
+				if `is_endog' > 0 {
+					tempvar fitted
+					qui regress `rv' `iv_z_vars' if `ess', noconstant
+					qui predict double `fitted' if `ess', xb
+					local clist "`clist' `fitted'"
+				}
+				else {
+					local clist "`clist' `rv'"
 				}
 			}
 			matrix colnames `scpc_Bread0' = `clist'
 			_estimates unhold `oreg_hold'
+			if `has_cluster' {
+				if "`timevar'" != "" sort `e(clustvar)' `cluster_order'
+				qui gen double `cl_idx_fb' = sum(`scpc_sel') if `ess'
+			}
 		}
 		else if("`uncond'"==""){
 			disp as text "conditional critical values only supported for ivregress 2sls and regress, use option uncond for only unconditionally valid critical values; aborting"

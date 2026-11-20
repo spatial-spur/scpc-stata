@@ -223,6 +223,109 @@ foreach backend in rust auto fallback {
 quietly scpc, uncond backend(fallback)
 assert "`e(backend)'" == "fallback"
 
+* Equivalent IV designs give the same results with redundant, factor, and lagged terms.
+clear
+set seed 203
+set obs 30
+generate double s_1 = _n
+generate long time = _n
+generate byte g = 1 + mod(_n, 3)
+generate double d2 = g == 2
+generate double d3 = g == 3
+generate double z1 = d2 + .3 * rnormal()
+generate double z2 = d3 + .3 * rnormal()
+generate double x = z1 + rnormal()
+generate double xcopy = x
+generate double y = x + d2 + rnormal()
+
+quietly ivregress 2sls y (x = z1 z2), vce(robust)
+quietly scpc, avc(.5) k(2) cvs backend(fallback)
+matrix ref_stats = e(scpcstats)
+matrix ref_cvs = e(scpccvs)
+quietly ivregress 2sls y (x xcopy = z1 z2), vce(robust)
+foreach backend in rust fallback {
+    quietly scpc, avc(.5) k(2) cvs backend(`backend')
+    matrix stats = e(scpcstats)
+    matrix cv = e(scpccvs)
+    assert rowsof(stats) == 2
+    mata: assert(max(abs(st_matrix("stats") - st_matrix("ref_stats"))) < 1e-8)
+    mata: assert(max(abs(st_matrix("cv") - st_matrix("ref_cvs"))) < 1e-8)
+}
+
+quietly ivregress 2sls y (d2 d3 = z1 z2), vce(robust)
+quietly scpc, avc(.5) k(3) cvs backend(fallback)
+matrix ref_stats = e(scpcstats)
+matrix ref_cvs = e(scpccvs)
+quietly ivregress 2sls y (i.g = z1 z2), vce(robust)
+quietly scpc, avc(.5) k(3) cvs backend(auto)
+assert "`e(backend)'" == "fallback"
+matrix stats = e(scpcstats)
+matrix cv = e(scpccvs)
+assert rowsof(stats) == 3
+mata: assert(max(abs(st_matrix("stats") - st_matrix("ref_stats"))) < 1e-8)
+mata: assert(max(abs(st_matrix("cv") - st_matrix("ref_cvs"))) < 1e-8)
+
+quietly tsset time
+generate double lag_x = L.x
+generate double lag_z1 = L.z1
+generate double lag_z2 = L.z2
+quietly ivregress 2sls y (lag_x = lag_z1 lag_z2), vce(robust)
+quietly scpc, avc(.5) k(2) cvs backend(fallback)
+matrix ref_stats = e(scpcstats)
+matrix ref_cvs = e(scpccvs)
+quietly ivregress 2sls y (L.x = L.z1 L.z2), vce(robust)
+quietly scpc, avc(.5) k(2) cvs backend(auto)
+assert "`e(backend)'" == "fallback"
+matrix stats = e(scpcstats)
+matrix cv = e(scpccvs)
+mata: assert(max(abs(st_matrix("stats") - st_matrix("ref_stats"))) < 1e-8)
+mata: assert(max(abs(st_matrix("cv") - st_matrix("ref_cvs"))) < 1e-8)
+
+* Cluster grouping must preserve lag values even when clusters cross time order.
+preserve
+generate byte cl = 1 + mod(time, 5)
+replace s_1 = cl
+quietly ivregress 2sls y (lag_x = lag_z1 lag_z2), vce(cluster cl)
+quietly scpc, avc(.5) k(2) cvs backend(fallback)
+matrix ref_stats = e(scpcstats)
+matrix ref_cvs = e(scpccvs)
+quietly ivregress 2sls y (L.x = L.z1 L.z2), vce(cluster cl)
+quietly scpc, avc(.5) k(2) cvs backend(auto)
+assert "`e(backend)'" == "fallback"
+matrix stats = e(scpcstats)
+matrix cv = e(scpccvs)
+mata: assert(max(abs(st_matrix("stats") - st_matrix("ref_stats"))) < 1e-8)
+mata: assert(max(abs(st_matrix("cv") - st_matrix("ref_cvs"))) < 1e-8)
+restore
+
+* A zero intercept slot in the stored fit must leave the noconstant design intact.
+program append_omitted_constant, eclass
+    tempname b covariance bread
+    matrix `b' = e(b), 0
+    matrix `covariance' = (e(V), 0 \ 0, 0)
+    matrix `bread' = (e(V_modelbased), 0 \ 0, 0)
+    matrix colnames `b' = x _cons
+    matrix colnames `covariance' = x _cons
+    matrix rownames `covariance' = x _cons
+    matrix colnames `bread' = x _cons
+    matrix rownames `bread' = x _cons
+    ereturn repost b=`b' V=`covariance', rename resize
+    ereturn matrix V_modelbased = `bread'
+end
+quietly ivregress 2sls y (x = z1 z2), vce(robust) noconstant
+quietly scpc, avc(.5) cvs backend(fallback)
+matrix ref_stats = e(scpcstats)
+matrix ref_cvs = e(scpccvs)
+append_omitted_constant
+foreach backend in rust fallback {
+    quietly scpc, avc(.5) cvs backend(`backend')
+    matrix stats = e(scpcstats)
+    matrix cv = e(scpccvs)
+    assert rowsof(stats) == 1
+    mata: assert(max(abs(st_matrix("stats") - st_matrix("ref_stats"))) < 1e-8)
+    mata: assert(max(abs(st_matrix("cv") - st_matrix("ref_cvs"))) < 1e-8)
+}
+
 * Load the Mata definitions directly to exercise conditioning beyond the
 * range where Stata's 2SLS fit keeps both columns.
 clear all
@@ -236,6 +339,14 @@ mata:
     assert(max(abs(cross(Q[., 3], V))) < 1e-8)
     X = Q[., 1], Q[., 3] + 1e-13 * Q[., 2]
 end
+capture mata: scpc_iv_projector(X, Z)
+assert _rc == 999
+
+* A projected design uniformly at roundoff scale is unidentified at the cutoff.
+mata: Q = I(4); Z = Q[., 1..2]; X = Q[., 3] + 1e-14 * Q[., 1]
+capture mata: scpc_iv_projector(X, Z)
+assert _rc == 999
+mata: X = (Q[., 3] + 1e-14 * Q[., 1]), (Q[., 4] + 1e-14 * Q[., 2])
 capture mata: scpc_iv_projector(X, Z)
 assert _rc == 999
 

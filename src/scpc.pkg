@@ -1,4 +1,4 @@
-v 1.0.0
+v 3
 d 'scpc': Spatial Correlation Robust Inference.
 d
 d This Stata package implements the (Conditional-) Spatial Correlation Principle Components 
@@ -17,9 +17,7 @@ d KW: spatial correlation
 d KW: HAC
 d KW: t-statistic
 d 
-d Requires: Stata version 11 
-d
-d Distribution Date: 20210201
+d Development checkout. The bundled Rust plugin targets Apple Silicon.
 d
 d Author: Ulrich K. Müller
 d
@@ -27,4 +25,5 @@ d Support: email umueller@princeton.edu
 d
 F scpc.ado
 F scpc.sthlp
-f scpc_rust.plugin
+g MACARM64 scpc_rust.plugin
+g OSX.ARM64 scpc_rust.plugin
