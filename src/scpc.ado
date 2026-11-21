@@ -1055,7 +1055,7 @@ void setOmsWfin(real scalar avc0, string scalar sel, string scalar latlong)
 		}
 		setfinalW(Oms,W,cv)
 		if(cols(W)-1<scpc_qmax | scpc_qmax==q_limit) break
-		scpc_qmax=round(scpc_qmax+scpc_qmax/2,1)
+		scpc_qmax=ceil(1.5*scpc_qmax)
 	}
 	stata("disp as text"+char(34)+"SCPC optimal q = "+strofreal(cols(W)-1, "%3.0f")+" for maximal average pairwise correlation = "+strofreal(avc0, "%5.3f")+`pavc'"")
 	

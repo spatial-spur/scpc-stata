@@ -63,49 +63,23 @@ end
 di as text "=== Test 1: ping + repeated scpc calls ==="
 program _test_ping_plug, plugin using("scpc_rust.plugin")
 plugin call _test_ping_plug, ping
-plugin call _test_ping_plug, ping_v2
-plugin call _test_ping_plug, ping_v3
-plugin call _test_ping_plug, ping_v6
 plugin call _test_ping_plug, ping_v7
 
-// The v6 plugin command receives repeated cluster totals. The v7 model
-// command receives observation scores, which the core sums within site.
+// Unequal cluster sizes exercise observation-score aggregation through the model ABI.
 clear
 set obs 24
 gen long site = _n
-gen double sx = sin(0.43 * site) + 0.02 * site
-gen double sy = cos(0.31 * site) + 0.03 * site
+gen double s_1 = sin(0.43 * site) + 0.02 * site
+gen double s_2 = cos(0.31 * site) + 0.03 * site
 gen byte copies = 1 + mod(site, 4)
 expand copies
 bysort site: gen byte rowid = _n
 gen double x = sin(0.39 * site + 0.77 * rowid)
 gen double y = 1.2 + 0.65 * x + cos(0.19 * site - 1.63 * rowid)
-quietly regress y x
-tempname b bread oldstats newstats oldcvs newcvs oldc0 newc0 oldcv newcv oldq newq oldtie newtie
-matrix `b' = e(b)
-matrix `bread' = e(V) / e(rmse)^2
-quietly predict double u, residuals
-gen double scorex = x * u
-bysort site: egen double totalx = total(scorex)
-bysort site: egen double totalu = total(u)
-foreach uncond in 0 1 {
-    local regressors ""
-    if !`uncond' local regressors "x"
-    matrix `oldstats' = J(1, 6, .)
-    matrix `newstats' = J(1, 6, .)
-    matrix `oldcvs' = J(1, 4, .)
-    matrix `newcvs' = J(1, 4, .)
-    plugin call _test_ping_plug sx sy totalx totalu site `regressors', ///
-        exact_scpc 2 2 1 1 .1 0 `uncond' 1 1 `b' `bread' `oldstats' `oldcvs' `oldc0' `oldcv' `oldq' `oldtie' 1 0 0
-    plugin call _test_ping_plug sx sy scorex u site `regressors', ///
-        model_exact_scpc 2 2 1 1 .1 0 `uncond' 1 1 `b' `bread' `newstats' `newcvs' `newc0' `newcv' `newq' `newtie' 1 0 0
-    assert 0 < `newstats'[1, 2] & `newstats'[1, 2] < .
-    assert mreldif(`oldstats', `newstats') < 1e-12
-    assert mreldif(`oldcvs', `newcvs') < 1e-12
-    assert reldif(`oldc0', `newc0') < 1e-12 & reldif(`oldcv', `newcv') < 1e-12
-    assert `oldq' == `newq' & `oldtie' == `newtie'
-}
-display "Clustered score ABI compatibility passed."
+quietly regress y x, vce(cluster site)
+check_rust_vs_fallback, exact cvs k(1) avc(.1)
+check_rust_vs_fallback, exact cvs uncond k(1) avc(.1)
+display "Unequal-cluster model ABI parity passed."
 program drop _test_ping_plug
 
 import delimited "`repo_root'/verification/data/bench_200.csv", clear
