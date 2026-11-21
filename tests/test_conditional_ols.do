@@ -303,14 +303,17 @@ quietly regress y lag_x, vce(cluster cl)
 quietly scpc, avc(.5) k(2) cvs backend(fallback)
 matrix ref_ols_stats = e(scpcstats)
 matrix ref_ols_cvs = e(scpccvs)
-quietly tsset time
-quietly regress y L.x, vce(cluster cl)
-quietly scpc, avc(.5) k(2) cvs backend(auto)
-assert "`e(backend)'" == "fallback"
-matrix ols_stats = e(scpcstats)
-matrix ols_cv = e(scpccvs)
-mata: assert(max(abs(st_matrix("ols_stats") - st_matrix("ref_ols_stats"))) < 1e-8)
-mata: assert(max(abs(st_matrix("ols_cv") - st_matrix("ref_ols_cvs"))) < 1e-8)
+foreach backend in auto fallback {
+    quietly tsset time
+    quietly regress y L.x, vce(cluster cl)
+    quietly scpc, avc(.5) k(2) cvs backend(`backend')
+    local expected = cond("`backend'" == "auto", "rust", "fallback")
+    assert "`e(backend)'" == "`expected'"
+    matrix ols_stats = e(scpcstats)
+    matrix ols_cv = e(scpccvs)
+    mata: assert(max(abs(st_matrix("ols_stats") - st_matrix("ref_ols_stats"))) < 1e-8)
+    mata: assert(max(abs(st_matrix("ols_cv") - st_matrix("ref_ols_cvs"))) < 1e-8)
+}
 restore
 
 * Unconditional ivregress liml with omitted factor base level must compact omitted columns.

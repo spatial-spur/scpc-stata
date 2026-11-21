@@ -653,7 +653,7 @@ void setfinalW(struct scpc_mats vector Oms, real matrix W, real scalar cv)
 	cvs=lengths
 	for(q=1;q<=scpc_qmax;q++){
 		cvs[q]=getcv(Oms,q,0.05)
-		lengths[q]=cvs[q]*gamma(.5*(q+1))/(sqrt(q)*gamma(.5*q))
+		lengths[q]=cvs[q]*exp(lngamma(.5*(q+1))-lngamma(.5*q))/sqrt(q)
 	} 
 	minindex(lengths,1,qvec,kmat)
 	q=qvec[1]
@@ -1317,37 +1317,68 @@ program scpc_setscores
 	if(e(cmd)=="regress" | e(cmd)=="logit" | e(cmd)=="probit"){
 		predict double `e' if e(sample),sc
 		local na : colnames e(V)
-		tokenize `na'
+		if "`ivcolumns'" == "" {
+			local n_b : word count `na'
+			forvalues j = 1/`n_b' {
+				local ivcolumns "`ivcolumns' `j'"
+			}
+		}
 		local i = 1
-		while "``i''" != "" {
+		foreach j of local ivcolumns {
+			local term : word `j' of `na'
 			local score_i : word `i' of `score_vars'
 			capture drop `score_i'
-			if("``i''"=="_cons") gen double `score_i'=`e' if e(sample)
-			else gen double `score_i'=`e'*``i'' if e(sample)
+			if ("`term'" == "_cons") {
+				gen double `score_i' = `e' if e(sample)
+			}
+			else {
+				quietly fvrevar `term' if e(sample)
+				gen double `score_i' = `e' * `r(varlist)' if e(sample)
+			}
 			local slist "`slist' `score_i'"
 			local ++i
 		}
 	}
 	else if(e(cmd)=="areg"){
 		predict double `e' if e(sample),sc
+		local na : colnames e(V)
+		if "`ivcolumns'" == "" {
+			local n_b : word count `na'
+			forvalues j = 1/`n_b' {
+				local ivcolumns "`ivcolumns' `j'"
+			}
+		}
+		// Materialize factor/interaction/lag terms in original dataset order before sorting by absvar.
+		local fv_vars ""
+		foreach j of local ivcolumns {
+			local term : word `j' of `na'
+			if ("`term'" == "_cons") {
+				local fv_vars "`fv_vars' _cons"
+			}
+			else {
+				quietly fvrevar `term' if e(sample)
+				local fv_vars "`fv_vars' `r(varlist)'"
+			}
+		}
 		tempvar initial_order
 		gen long `initial_order' = _n
 		sort `e(absvar)'
-		local na : colnames e(V)
-		tokenize `na'
-		local i = 1
-		while "``i''" != "" {
-			local score_i : word `i' of `score_vars'
+		local n_act : word count `ivcolumns'
+		forvalues act = 1/`n_act' {
+			local fv : word `act' of `fv_vars'
+			local score_i : word `act' of `score_vars'
 			capture drop `score_i'
-			if("``i''"=="_cons") gen double `score_i'=`e' if e(sample)
-			else{
+			if ("`fv'" == "_cons") {
+				gen double `score_i' = `e' if e(sample)
+			}
+			else {
 				tempvar x
-				by `e(absvar)': egen double `x'=mean(``i'') if e(sample)
-				sum  ``i'' if e(sample)			
-				gen double `score_i'=`e'*(``i''-`x'+`r(mean)') if e(sample)
+				by `e(absvar)': egen double `x' = mean(`fv') if e(sample)
+				sum `fv' if e(sample)
+				gen double `score_i' = `e' * (`fv' - `x' + `r(mean)') if e(sample)
+				drop `x'
 			}
 			local slist "`slist' `score_i'"
-			local ++i
 		}
 		sort `initial_order'
 	}
@@ -1480,8 +1511,8 @@ program scpc, eclass sortpreserve
 		di as error "nthreads() must be a positive integer (or -1 for default)"
 		exit 198
 	}
-	if `k' < 1 {
-		di as error "k() must be at least 1"
+	if missing(`k') | `k' < 1 | `k' != floor(`k') {
+		di as error "k() must be a positive integer"
 		exit 198
 	}
 
@@ -1489,27 +1520,29 @@ program scpc, eclass sortpreserve
 	matrix `b_input' = e(b)
 	matrix `bread_input' = e(V_modelbased)
 	local iv_score_options ""
-	if "`e(cmd)'" == "ivregress" {
-		local n_coefficients = colsof(`b_input')
-		if rowsof(`bread_input') != `n_coefficients' | colsof(`bread_input') != `n_coefficients' {
-			di as error "e(b) and e(V_modelbased) dimensions do not match"
-			exit 198
-		}
+	local n_coefficients = colsof(`b_input')
+	if rowsof(`bread_input') != `n_coefficients' | colsof(`bread_input') != `n_coefficients' {
+		di as error "e(b) and e(V_modelbased) dimensions do not match"
+		exit 198
+	}
+	if inlist("`e(cmd)'", "regress", "areg", "logit", "probit", "ivregress") {
 		tempname omitted
 		quietly _ms_omit_info `b_input'
 		matrix `omitted' = r(omit)
-		local iv_columns ""
+		local active_columns ""
 		forvalues j = 1/`n_coefficients' {
 			if `omitted'[1, `j'] == 0 & !(`b_input'[1, `j'] == 0 & `bread_input'[`j', `j'] == 0) {
-				local iv_columns "`iv_columns' `j'"
+				local active_columns "`active_columns' `j'"
 			}
 		}
-		if trim("`iv_columns'") == "" {
-			di as error "SCPC requires at least one estimable IV coefficient"
+		if trim("`active_columns'") == "" {
+			di as error "SCPC requires at least one estimable coefficient"
 			exit 198
 		}
-		mata scpc_select_iv_columns("`b_input'", "`bread_input'", "`iv_columns'")
-		local iv_score_options ivcolumns("`iv_columns'")
+		if `: word count `active_columns'' < `n_coefficients' {
+			mata scpc_select_iv_columns("`b_input'", "`bread_input'", "`active_columns'")
+		}
+		local iv_score_options ivcolumns("`active_columns'")
 	}
 	matrix `scpc_Bread' = `bread_input'
 	if( `scpc_Bread'[1,1]==.) {
@@ -1519,9 +1552,9 @@ program scpc, eclass sortpreserve
 	if `avc'==-1 {
 		local avc 0.03	// set default
 	}
-	if `avc'<0.001 | `avc'>0.99 {
-		disp as text "average correlation must be between 0.001 and 0.99; aborting"
-		exit(999)
+	if missing(`avc') | `avc' <= 0.001 | `avc' >= 0.99 {
+		di as error "avc() must lie strictly between 0.001 and 0.99"
+		exit 198
 	}
 
 	// Build numerically sorted s_1..s_d coordinate list (avoids unab alphabetical/dataset ordering bugs)
@@ -1716,7 +1749,16 @@ program scpc, eclass sortpreserve
 						}
 						local has_cons 1
 					}
-					else {
+					else if "`e(cmd)'" == "regress" {
+						capture quietly fvrevar `colname' if e(sample)
+						if _rc != 0 {
+							local rust_eligible 0
+							local rust_reason "could not materialize regressor '`colname''"
+							continue, break
+						}
+						local xvars "`xvars' `r(varlist)'"
+					}
+					else if "`uncond'" == "" {
 						if strpos("`colname'", ".") > 0 | strpos("`colname'", "#") > 0 {
 							local rust_eligible 0
 							local rust_reason "factor, interaction, or time-series term (`colname') is not supported in Rust backend"
@@ -1790,8 +1832,7 @@ program scpc, eclass sortpreserve
 					}
 				}
 				local n_z_excl : word count `z_excl_vars'
-				local n_exog : word count `x_exog_vars'
-				if `n_exog' + `n_z_excl' < `n_endog' {
+				if `n_z_excl' < `n_endog' {
 					local rust_eligible 0
 					local rust_reason "insufficient excluded instruments in ivregress"
 				}

@@ -337,11 +337,11 @@ assert _rc == 198
 capture scpc
 assert _rc == 999
 
-// 7c: Omitted/collinear e(b) drop (backend(rust) rejects; master Mata getcv() loops on zero-variance omitted var)
+// 7c: Omitted columns are dropped before either backend runs.
 gen x_col = 2 * x1
 regress y x1 x2 x_col, robust
-capture scpc, backend(rust)
-assert _rc == 198
+check_rust_vs_fallback, cvs
+assert rowsof(e(scpcstats)) == 3
 
 // 7d: Active sample >= 4500 now runs approx natively on Rust (exact requires exact option)
 clear
@@ -1015,5 +1015,64 @@ assert "`e(method)'" == "approx"
 scpc, exact backend(rust)
 assert "`e(backend)'" == "rust"
 assert "`e(method)'" == "exact"
+
+// Option validation: k() integer >= 1, avc() strictly in (0.001, 0.99)
+regress y x, robust
+capture scpc, k(.)
+assert _rc == 198
+capture scpc, k(1.5)
+assert _rc == 198
+capture scpc, avc(0.001)
+assert _rc == 198
+capture scpc, avc(0.99)
+assert _rc == 198
+
+// Factor variables, interactions, collinear/omitted columns, and areg with L.x
+clear
+set seed 2032
+set obs 48
+gen double s_1 = runiform()
+gen double s_2 = runiform()
+gen int g = ceil(_n / 16)
+gen int h = mod(_n, 2) + 1
+gen int cl = ceil(_n / 8)
+bysort cl: gen long t = _n
+gen double x1 = rnormal()
+gen double x2 = rnormal()
+gen double x_dup = x1
+gen double z = rnormal()
+gen double u = rnormal()
+gen double x = 0.8 * z + 0.3 * x1 + 0.4 * u
+gen double y = 1.0 + 0.6 * g + 0.9 * x1 - 0.4 * x2 + 0.5 * x1 * x2 + 1.1 * x + u
+
+// Factor regressors
+regress y i.g x1, robust
+check_rust_vs_fallback, avc(0.05) cvs
+check_rust_vs_fallback, avc(0.05) uncond cvs
+
+// Continuous interaction c.x1#c.x2
+regress y x1 x2 c.x1#c.x2, robust
+check_rust_vs_fallback, avc(0.05) cvs
+
+// Collinear omitted regressor in regress and ivregress
+regress y x1 x_dup x2, robust
+check_rust_vs_fallback, avc(0.05) cvs
+ivregress 2sls y x1 x_dup (x = z), robust
+check_rust_vs_fallback, avc(0.05) cvs
+
+// Factor interaction with omitted/empty cell
+preserve
+drop if g == 3 & h == 2
+regress y i.g##i.h x1, robust
+check_rust_vs_fallback, avc(0.05) cvs
+restore
+
+// areg with time-series lag L.x and unsorted panel order
+xtset cl t
+regress y x1 x2
+gen long orig_ord = _n
+areg y L.x x2, absorb(cl) vce(robust)
+check_rust_vs_fallback, avc(0.05) uncond cvs
+assert orig_ord == _n
 
 di as text "ALL MILESTONE 1 & 2 STATA TESTS PASSED!"

@@ -25,5 +25,6 @@ d Support: email umueller@princeton.edu
 d
 F scpc.ado
 F scpc.sthlp
+F scpc_licenses.txt
 g MACARM64 scpc_rust.plugin
 g OSX.ARM64 scpc_rust.plugin
