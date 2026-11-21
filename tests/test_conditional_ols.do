@@ -296,7 +296,32 @@ matrix stats = e(scpcstats)
 matrix cv = e(scpccvs)
 mata: assert(max(abs(st_matrix("stats") - st_matrix("ref_stats"))) < 1e-8)
 mata: assert(max(abs(st_matrix("cv") - st_matrix("ref_cvs"))) < 1e-8)
+
+* Clustered OLS with time-series lag operator L.x must also preserve time order.
+quietly tsset time
+quietly regress y lag_x, vce(cluster cl)
+quietly scpc, avc(.5) k(2) cvs backend(fallback)
+matrix ref_ols_stats = e(scpcstats)
+matrix ref_ols_cvs = e(scpccvs)
+quietly tsset time
+quietly regress y L.x, vce(cluster cl)
+quietly scpc, avc(.5) k(2) cvs backend(auto)
+assert "`e(backend)'" == "fallback"
+matrix ols_stats = e(scpcstats)
+matrix ols_cv = e(scpccvs)
+mata: assert(max(abs(st_matrix("ols_stats") - st_matrix("ref_ols_stats"))) < 1e-8)
+mata: assert(max(abs(st_matrix("ols_cv") - st_matrix("ref_ols_cvs"))) < 1e-8)
 restore
+
+* Unconditional ivregress liml with omitted factor base level must compact omitted columns.
+quietly ivregress liml y (d2 d3 = z1 z2), vce(robust)
+quietly scpc, avc(.5) k(3) uncond cvs backend(fallback)
+matrix ref_liml_stats = e(scpcstats)
+quietly ivregress liml y (i.g = z1 z2), vce(robust)
+quietly scpc, avc(.5) k(3) uncond cvs backend(auto)
+matrix liml_stats = e(scpcstats)
+assert rowsof(liml_stats) == 3
+mata: assert(max(abs(st_matrix("liml_stats") - st_matrix("ref_liml_stats"))) < 1e-8)
 
 * A zero intercept slot in the stored fit must leave the noconstant design intact.
 program append_omitted_constant, eclass
@@ -358,5 +383,39 @@ mata:
     V = scpc_iv_projector(X, Z)
     assert(max(abs(cross(X, V) - I(2))) < 1e-10)
 end
+
+* Selected-design rank uses the same relative SVD threshold in every host.
+mata: x = (-1\1\-1\1); z = (-1\-1\1\1)
+foreach unit in 1e-200 1 1e200 {
+    mata: assert(cols(scpc_design_basis((x, `unit'*(x+1e-9*z)), 1)) == 2)
+    foreach gap in 1e-11 1e-13 {
+        capture mata: scpc_design_basis((x, `unit'*(x+`gap'*z)), 1)
+        assert _rc == 999
+    }
+}
+
+* Strict Gaussian rejection at, and immediately next to, a one-factor tie.
+mata:
+    r = 1 - 5e-15
+    assert(getrp((1,r \ r,1), 1) == .5)
+    assert(getrp((1,0,r \ 0,0,0 \ r,0,1), 1) == .5)
+    loading = (5,3,4)'
+    assert(getrp(loading * loading', 1) == 0)
+    assert(getrp(loading * loading', 1-1e-15) == 1)
+    for (i=-900; i<=900; i=i+900) {
+        scale = scpc_power_two(i)
+        a = 2401 * scale
+        b = 49 * scale
+        assert(getrp((a,b \ b,scale), 49) == 0)
+        b = b * (1 - epsilon(1))
+        assert(getrp((a,b \ b,scale), 49) == .5)
+    }
+    near = loading * loading'
+    near[1,1] = 25 + 2^(-48)
+    assert(abs(getrp(near,1) - .5) < 2e-7)
+    assert(getrp((1,-1 \ -1,1), 1) == 0)
+end
+capture mata: getrp((0,1 \ 1,0), 1)
+assert _rc == 3498
 
 display "Conditional OLS cutoff tests passed."

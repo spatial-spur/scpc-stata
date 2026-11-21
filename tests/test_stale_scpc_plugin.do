@@ -7,7 +7,7 @@ assert `"`oldplugin'"' != "" & `"`package_dir'"' != ""
 adopath ++ "`package_dir'"
 program _scpc_rust_plugin, plugin using(`"`oldplugin'"')
 plugin call _scpc_rust_plugin, ping
-capture plugin call _scpc_rust_plugin, ping_v6
+capture plugin call _scpc_rust_plugin, ping_v7
 assert _rc != 0
 
 input double(s_1 x)
@@ -22,7 +22,7 @@ generate double z = x + 0.01 * s_1
 quietly ivregress 2sls y (x = z), vce(robust)
 quietly scpc, avc(.5) k(1) cvs backend(auto)
 assert "`e(backend)'" == "fallback"
-assert strpos("`e(backend_reason)'", "(v6)") > 0
+assert strpos("`e(backend_reason)'", "(v7)") > 0
 assert strpos("`e(backend_reason)'", "loaded scpc_rust.plugin is incompatible") > 0
 matrix cv = e(scpccvs)
 assert abs(cv[1,3] - 17.432446) < .002
