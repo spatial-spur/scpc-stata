@@ -42,7 +42,7 @@ By default, {cmd:scpc} computes critical values conditional on the realized regr
 Conditional 2SLS with active factor or time-series terms uses the Mata backend.
 SCPC calibrates the exponential correlation benchmark up to an average pairwise correlation of 0.03 by default. The coverage argument requires the benchmark or the corresponding asymptotic assumptions. The intervals are marginal for individual coefficients.
 The {it:avc} option overrides the correlation bound. Computation times increase for smaller values of {it:avc}. The {it:k} option controls how many coefficients are reported (10 by default).
-By default, SCPC uses the Nyström approximation for 4,500 or more locations. A sampled covariance that fails the positive semidefinite check produces an error. {opt exact} uses the full location matrix and a finite decay grid.
+By default, SCPC uses the Nyström approximation for 4,500 or more locations. A sampled covariance that fails the positive semidefinite check produces an error. {opt exact} uses the full location matrix. Both methods approximate worst-case calibration on a finite decay grid.
 
 {pstd}
 Ordinary IV t inference requires strong identification and a score process that satisfies the SCPC assumptions. The conditional 2SLS result uses the larger of the conditional and unconditional cutoffs. Its benchmark for finite-sample conditional size control requires the specified Gaussian error law given the full realized design, including the endogenous regressors. Standard IV exogeneity alone supplies a weaker condition.

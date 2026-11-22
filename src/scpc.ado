@@ -727,17 +727,21 @@ void normalize_s(real matrix s)
 	external real scalar scpc_latlongflag
 	real matrix evecs
 	real vector evals
+	real scalar scale
 	external real vector scpc_permfin
 	
 	if(scpc_latlongflag==0) {
-		s=s:-mean(s)		
+		s=s:-(0.5 * colmin(s) + 0.5 * colmax(s))
+		scale=max(abs(s))
+		if(scale>0) s=s/scale
+		s=s:-mean(s)
 		symeigensystem(cross(s,s),evecs,evals)
 		s=s*evecs		
 		if(max(s[.,1])!=max(abs(s[.,1]))) s=-s
 		scpc_permfin=order(s,(1::cols(s))')
 		s=s[scpc_permfin,.]
 		s=s:-colmin(s)
-		s=s/max(s)	
+		if(max(s)>0) s=s/max(s)
 	}
 	else
 	{
@@ -1668,10 +1672,10 @@ program scpc, eclass sortpreserve
 		}
 
 		if `plugin_ok' == 1 {
-			capture plugin call _scpc_rust_plugin, require_spec 0.3.6
+			capture plugin call _scpc_rust_plugin, require_spec 0.3.8
 			if _rc != 0 {
 				local plugin_ok 0
-				local plugin_reason "loaded scpc_rust.plugin needs methods spec 0.3.6 or newer. Install the matching plugin and restart Stata"
+				local plugin_reason "loaded scpc_rust.plugin needs methods spec 0.3.8 or newer. Install the matching plugin and restart Stata"
 			}
 		}
 
