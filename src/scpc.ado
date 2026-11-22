@@ -3,16 +3,6 @@
 set matastrict on
 mata 
 
-real scalar getavc(real scalar c, real vector dist)
-// computes average correlation given vector of pairwise distances
-{
-	real scalar cutoff
-	real vector d_act
-	cutoff = (c > 0 ? 800 / c : .)
-	d_act = select(dist, dist :< cutoff)
-	return(length(d_act) > 0 ? sum(exp(-c * d_act)) / length(dist) : 0)
-}	
-
 real colvector scpc_euclidean_row_norm(real matrix differences)
 // Scale before squaring to avoid overflowing or underflowing finite distances.
 {
@@ -912,13 +902,6 @@ XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 XXXXXXXXXXXXXXX driver routines XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX  */
 
-void setcvsflag(real scalar cvsf)
-{
-	external real scalar scpc_cvsflag
-	scpc_cvsflag=cvsf
-}
-
-
 void set_method_opts(real scalar is_approx, real scalar seed_in)
 {
 	external real scalar scpc_approxflag, scpc_seedval
@@ -1070,7 +1053,7 @@ void set_scpcstats(string scalar w, string scalar sel, string scalar outmat, rea
 {	
 	real vector y
 	real scalar tau, pval, SE, y_norm, proj_norm, scale
-	external real scalar scpc_condflag, scpc_cvsflag
+	external real scalar scpc_condflag
 	external struct scpc_mats vector scpc_Omsfin, scpc_Omsxfin
 	external real matrix scpc_Wfin, scpc_Wx
 	external real vector scpc_permfin
