@@ -40,9 +40,12 @@ as long as these are used with the standard error option {it:robust} or {it:clus
 then {it:scpc} corrects for spatial correlations between clusters, assuming that all observations within a cluster share the same location.
 By default, {cmd:scpc} computes critical values conditional on the realized regressors, as described in Müller and Watson (2023). Conditional inference supports {manhelp regress R:regress} and {cmd:ivregress 2sls}. Use {it:uncond} for unconditional critical values after {manhelp areg R:areg}, {manhelp logit R:logit}, or {manhelp probit R:probit}. After {cmd:ivregress liml}, use {it:uncond} with the Mata backend.
 Conditional 2SLS with active factor or time-series terms uses the Mata backend.
-By default, {it:scpc} conducts spatially robust inference under the assumption that the largest average pairwise correlation between the observations / clusters is no larger than 0.03. This default can be overridden by the
-{it:avc} option. Note that computation times increase for smaller values of {it:avc}. To make the algorithm faster, SCPC inference is computed only for the first 10 coefficients. This can be changed by the {it:k} option. 
-By default, SCPC uses the Nyström approximation for 4,500 or more locations. A sampled covariance that fails the positive semidefinite check produces an error. {opt exact} uses the full covariance grid.
+SCPC calibrates the exponential correlation benchmark up to an average pairwise correlation of 0.03 by default. The coverage argument requires the benchmark or the corresponding asymptotic assumptions. The intervals are marginal for individual coefficients.
+The {it:avc} option overrides the correlation bound. Computation times increase for smaller values of {it:avc}. The {it:k} option controls how many coefficients are reported (10 by default).
+By default, SCPC uses the Nyström approximation for 4,500 or more locations. A sampled covariance that fails the positive semidefinite check produces an error. {opt exact} uses the full location matrix and a finite decay grid.
+
+{pstd}
+Ordinary IV t inference requires strong identification and a score process that satisfies the SCPC assumptions. The conditional 2SLS result uses the larger of the conditional and unconditional cutoffs. Its benchmark for finite-sample conditional size control requires the specified Gaussian error law given the full realized design, including the endogenous regressors. Standard IV exogeneity alone supplies a weaker condition.
 
  
 
@@ -69,7 +72,7 @@ After {cmd:ivregress 2sls}, omitted coefficients are excluded from this count.
 {opt backend(auto|rust|fallback)} selects the computational backend. {opt auto} uses the matching Rust plugin when eligible and falls back to Mata otherwise. {opt rust} requires the matching plugin. {opt fallback} runs in Mata. The Stata global or environment variable {cmd:SPATIAL_BACKEND} sets the default when present. Restart Stata after replacing an incompatible plugin that was already loaded.
 
 {phang}
-{opt nthreads(#)} sets the number of threads used by the Rust backend.
+{opt nthreads(#)} limits parallel work scheduled by Rust. The linked linear algebra provider manages its own threads.
 
 {phang}
 {opt exact} forces exact SCPC regardless of sample size.
@@ -94,6 +97,13 @@ After {cmd:ivregress 2sls}, omitted coefficients are excluded from this count.
 {phang}{cmd:. gen clust=round(rnormal(0,10),1)}{p_end}
 {phang}{cmd:. regress mpg weight length, cluster(clust)}{p_end}
 {phang}{cmd:. scpc}{p_end}
+
+{pstd}
+For one endogenous regressor {it:p} and one excluded instrument {it:z}, test a candidate coefficient {it:b0} with the scalar Anderson–Rubin regression. Include the same exogenous controls and test the coefficient of {it:z} using the reported SCPC p-value. Retain the candidates that pass this test. See Müller and Watson (2023), section 5.3.
+
+{phang}{cmd:. generate double y0 = y - 0.5 * p}{p_end}
+{phang}{cmd:. regress y0 z x1 x2, robust}{p_end}
+{phang}{cmd:. scpc, k(1)}{p_end}
 
 
 {marker results}{...}

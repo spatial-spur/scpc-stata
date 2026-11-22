@@ -421,4 +421,41 @@ end
 capture mata: getrp((0,1 \ 1,0), 1)
 assert _rc == 3498
 
+* Adding singleton cluster labels preserves an exact-zero slope direction.
+clear
+input double s_1 double x double y
+.77395604855596334 -2 -1
+.43887843975205232 -1 -3
+.85859791991138246  0  0
+.69736802905936390  1  3
+.09417734788764953  2  1
+end
+generate long singleton = _n
+foreach backend in fallback rust {
+    quietly regress y x, robust
+    quietly scpc, avc(.3) cvs backend(`backend')
+    matrix unclustered = e(scpcstats)
+    quietly regress y x, vce(cluster singleton)
+    quietly scpc, avc(.3) cvs backend(`backend')
+    matrix clustered = e(scpcstats)
+    mata: assert(max(abs(st_matrix("unclustered") - st_matrix("clustered"))) < 1e-10)
+}
+
+* An outcome shift changes the intercept and preserves its standard error.
+clear
+set obs 30
+generate double s_1 = (_n - 1) / 29
+generate double y = mod(_n * 11, 29) / 8 - 2
+generate double y_shift = y + 1e12
+foreach backend in fallback rust {
+    quietly regress y, robust
+    quietly scpc, backend(`backend')
+    matrix base = e(scpcstats)
+    quietly regress y_shift, robust
+    quietly scpc, backend(`backend')
+    matrix shifted = e(scpcstats)
+    assert reldif(base[1, 2], shifted[1, 2]) < 1e-10
+}
+mata: assert(max(scpc_decay_grid(1, 1.7)) == 1.7)
+
 display "Conditional OLS cutoff tests passed."

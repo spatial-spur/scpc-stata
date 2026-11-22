@@ -651,36 +651,38 @@ void setfinalW(struct scpc_mats vector Oms, real matrix W, real scalar cv)
 	W=W[.,1::q+1]
 }
 
-real scalar getnc(real scalar c0, real scalar cmax)
-// computes number of c-values in grid so that largest c is at least cmax
+real rowvector scpc_decay_grid(real scalar c0, real scalar cmax)
 {
 	external real scalar scpc_cgridfac
-	return(max((2,ceil(log(cmax/c0)/log(scpc_cgridfac)))))
+	real scalar ratio, span, n, i, c
+	real rowvector grid
+	ratio = cmax / c0
+	span = (ratio < . ? log(ratio) : log(cmax) - log(c0))
+	n = max((2, ceil(span / log(scpc_cgridfac))))
+	grid = J(1, n, .)
+	c = c0
+	for (i = 1; i <= n; i++) {
+		grid[i] = c
+		c = c * scpc_cgridfac
+	}
+	if (grid[n] < cmax) grid = (grid, cmax)
+	return(grid)
 }
 
 struct scpc_mats vector getOms(real matrix distmat, real scalar c0, real scalar cmax, real matrix W)
 // computes vector of scpc_qmax x scpc_qmax Om(c) matrices from distmat, c0 and W
 {
-	external real scalar scpc_cgridfac
 	struct scpc_mats vector Oms
-	real scalar i, c
-	
-	
-	Oms=scpc_mats(getnc(c0,cmax))
-	c=c0
+	real scalar i
+	real rowvector grid
+
+	grid = scpc_decay_grid(c0, cmax)
+	Oms=scpc_mats(cols(grid))
 	for(i=1;i<=length(Oms);i++){	
-		Oms[i].mat=cross(W,exp(-c*distmat))*W 
-		c=c*scpc_cgridfac
+		Oms[i].mat=cross(W,exp(-grid[i]*distmat))*W
 	}
 	return(Oms)
 }
-
-real scalar gettau(real vector y, real matrix W)
-// computes SCPC t-stat
-{
-	return(sqrt(cols(W)-1)*cross(W[.,1],y)/norm(cross(W[.,2::cols(W)],y)))
-}
-
 
 void setGQxw()
 {
@@ -861,21 +863,21 @@ struct scpc_pair_sample scalar scpc_draw_pairs(real matrix s)
 struct scpc_mats vector LNgetOms(real scalar c0, real scalar cmax, real matrix W,
     struct scpc_pair_sample scalar pairs)
 {
-	external real scalar scpc_cgridfac
 	struct scpc_mats vector Oms
-	real scalar i, c, n, capM, covariance_scale
+	real scalar i, n, capM, covariance_scale
+	real rowvector grid
 	real vector cd, eigenvalues
 	real matrix W1,W2,gram, cross_sample, normalized_covariance
 
 	n=rows(W)
 	capM=rows(pairs.dist)
-	Oms=scpc_mats(getnc(c0,cmax))
+	grid = scpc_decay_grid(c0, cmax)
+	Oms=scpc_mats(cols(grid))
 	W1=W[pairs.inds[1::capM],.]
 	W2=W[pairs.inds[2::capM+1],.]
 	gram=cross(W, W)
-	c=c0
 	for(i=1;i<=length(Oms);i++){
-		cd=exp(-c*pairs.dist)
+		cd=exp(-grid[i]*pairs.dist)
 		cross_sample = cross(W1, cd, W2)
 		Oms[i].mat = gram + .5 * (n * (n - 1) / capM) * (cross_sample + cross_sample')
 		if (hasmissing(Oms[i].mat)) {
@@ -891,7 +893,6 @@ struct scpc_mats vector LNgetOms(real scalar c0, real scalar cmax, real matrix W
 				exit(198)
 			}
 		}
-		c=c*scpc_cgridfac
 	}
 	return(Oms)
 }
@@ -1052,7 +1053,7 @@ void setOmsWfin(real scalar avc0, string scalar sel, string scalar latlong)
 void set_scpcstats(string scalar w, string scalar sel, string scalar outmat, real scalar beta)
 {	
 	real vector y
-	real scalar tau, pval, SE, y_norm, proj_norm, scale
+	real scalar tau, pval, SE, y_norm, proj_norm, scale, root_q
 	external real scalar scpc_condflag
 	external struct scpc_mats vector scpc_Omsfin, scpc_Omsxfin
 	external real matrix scpc_Wfin, scpc_Wx
@@ -1066,20 +1067,26 @@ void set_scpcstats(string scalar w, string scalar sel, string scalar outmat, rea
 	y=y[scpc_permfin]
 	scale=max(abs(y))
 	if (scale > 0 & scale < .) y = y / scale
+	y = y :- mean(y)
 	y_norm=norm(y)
 	proj_norm=norm(cross(scpc_Wfin[.,2::cols(scpc_Wfin)],y))
 	if(y_norm == 0 | y_norm >= . | proj_norm >= . | proj_norm <= 1e-12 * y_norm){
 		stata("disp as text "+char(34)+"SCPC variance projection is degenerate; aborting"+char(34))
 		exit(999)
 	}
-	tau=gettau(y,scpc_Wfin)
-	pval=maxrp(scpc_Omsfin,cols(scpc_Wfin)-1,abs(tau)/sqrt(cols(scpc_Wfin)-1))
+	root_q = sqrt(cols(scpc_Wfin) - 1)
+	SE = (proj_norm / (root_q * sqrt(rows(scpc_Wfin)))) * scale
+	tau = beta / SE
+	if (missing(tau)) {
+		errprintf("SCPC t-statistic exceeds the numeric range\n")
+		exit(999)
+	}
+	pval=maxrp(scpc_Omsfin,cols(scpc_Wfin)-1,abs(tau)/root_q)
 	cv=scpc_cvfin
 	if(scpc_condflag) {
-		pval=max((pval,maxrp(scpc_Omsxfin,cols(scpc_Wx)-1,abs(tau)/sqrt(cols(scpc_Wx)-1))))
+		pval=max((pval,maxrp(scpc_Omsxfin,cols(scpc_Wx)-1,abs(tau)/root_q)))
 		cv=max((cv,scpc_cvxfin))
 	}
-	SE=(proj_norm/(sqrt(cols(scpc_Wfin)-1)*sqrt(rows(scpc_Wfin))))*scale
 	st_matrix(outmat, (beta, SE, tau, pval, beta-cv*SE,beta+cv*SE ))	// coef, SE, tstat, p-value, 95% CI
 }
 
@@ -1216,7 +1223,7 @@ void scpc_conditional_weights(real matrix left, real matrix right,
     external real matrix scpc_Wfin, scpc_Wx
     external real vector scpc_permfin
     real matrix W, R, RX, residual, weighted, panels
-    real colvector xb, xa, groups, first
+    real colvector xb, xa, groups, first, singletons
     real scalar pre_max, q
 
     scpc_condflag = 1
@@ -1229,6 +1236,9 @@ void scpc_conditional_weights(real matrix left, real matrix right,
     if (cluster_var != "") {
         groups = st_data(., cluster_var, sample_sel)
         panels = panelsetup(groups, 1)
+        singletons = select(panels[., 1], panels[., 1] :== panels[., 2])
+        // A zero singleton uses the same sign as an unclustered zero.
+        xa[singletons] = xa[singletons] :+ (xa[singletons] :== 0)
         R = W[groups, .]
         first = panelsum(R[., 1] :* xb :* xa, panels)
     }
@@ -1258,26 +1268,19 @@ void scpc_conditional_weights(real matrix left, real matrix right,
 }
 
 void set_scpccvs(string scalar outmat)
-{	
+{
 	external struct scpc_mats vector scpc_Omsfin, scpc_Omsxfin
 	external real matrix scpc_Wfin
-	external real scalar scpc_condflag
-	real scalar q,i,j
-	real matrix levels, cvs
-	
-	
-	levels=(.32,.10,.05,.01)
-	cvs=0*levels	
-	q=cols(scpc_Wfin)-1
-	for(i=1;i<=rows(levels);i++){
-		for(j=1;j<=cols(levels);j++){
-			cvs[i,j]=getcv(scpc_Omsfin,q,levels[i,j])
-			if(scpc_condflag){
-				cvs[i,j]=max((cvs[i,j],getcv(scpc_Omsxfin,q,levels[i,j])))
-			}
-		}
+	external real scalar scpc_condflag, scpc_cvfin, scpc_cvxfin
+	real scalar q
+	real rowvector cvs
+
+	q = cols(scpc_Wfin) - 1
+	cvs = (getcv(scpc_Omsfin, q, .32), getcv(scpc_Omsfin, q, .10), scpc_cvfin, getcv(scpc_Omsfin, q, .01))
+	if (scpc_condflag) {
+		cvs = colmax(cvs \ (getcv(scpc_Omsxfin, q, .32), getcv(scpc_Omsxfin, q, .10), scpc_cvxfin, getcv(scpc_Omsxfin, q, .01)))
 	}
-	st_matrix(outmat, cvs)	
+	st_matrix(outmat, cvs)
 }
 
 void get_scpc_meta(string scalar c0name, string scalar cvname, string scalar qname)
@@ -2058,7 +2061,6 @@ program scpc, eclass sortpreserve
 			tempvar w
 			matrix `coef_mat' = `neff'*`scpc_Bread'[`i', 1...]
 			qui matrix score double `w' = `coef_mat' if `scpc_sel' == 1		
-			qui replace `w' = `w' + `b_mat'[1,`i'] if `scpc_sel' == 1
 			if("`uncond'"==""){	
 				capture drop `x_var' 
 				capture drop `xs_var'			
