@@ -1,7 +1,7 @@
 * Run in a fresh Stata session with an older plugin path and this checkout's src directory.
 clear all
 set more off
-version 14
+version 16.0
 args oldplugin package_dir
 assert `"`oldplugin'"' != "" & `"`package_dir'"' != ""
 adopath ++ "`package_dir'"

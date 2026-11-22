@@ -21,7 +21,7 @@
 {synopt :{opt k(#)}}overrides default value of 10 for the number of coefficients SCPC t-statistics are computed for{p_end}
 {synopt :{opt cvs}}prints a table of two-sided critical values of SCPC t-statistic of level 32%, 10%, 5% and 1%{p_end}
 {synopt :{opt backend(auto|rust|fallback)}}choose the computational backend. {opt auto} uses the matching Rust plugin when available and Mata otherwise. {opt rust} requires the matching plugin. Set the default with {cmd:SPATIAL_BACKEND} as a Stata global or environment variable.{p_end}
-{synopt :{opt nthreads(#)}}set the number of Rust threads. {opt nthreads(1)} runs Rust with one thread.{p_end}
+{synopt :{opt nthreads(#)}}limit Rust workers.{p_end}
 {synopt :{opt exact}}use exact SCPC.{p_end}
 {synopt :{opt approx}}use the Nyström approximation.{p_end}
 {synopt :{opt seed(#)}}set the seed for the Nyström approximation. Default is {opt seed(1)}.{p_end}

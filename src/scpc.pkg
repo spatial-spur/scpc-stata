@@ -17,6 +17,8 @@ d KW: spatial correlation
 d KW: HAC
 d KW: t-statistic
 d 
+d Requires: Stata version 16 or later
+d
 d Development checkout. The bundled Rust plugin targets Apple Silicon.
 d
 d Author: Ulrich K. Müller

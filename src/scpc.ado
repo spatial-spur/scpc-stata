@@ -1,4 +1,4 @@
-
+version 16.0
 
 set matastrict on
 mata 
@@ -661,11 +661,12 @@ real rowvector scpc_decay_grid(real scalar c0, real scalar cmax)
 	n = max((2, ceil(span / log(scpc_cgridfac))))
 	grid = J(1, n, .)
 	c = c0
-	for (i = 1; i <= n; i++) {
+	for (i = 1; i <= n & c < .; i++) {
 		grid[i] = c
 		c = c * scpc_cgridfac
 	}
-	if (grid[n] < cmax) grid = (grid, cmax)
+	grid = grid[1..(i-1)]
+	if (cmax < . & grid[cols(grid)] < cmax) grid = (grid, cmax)
 	return(grid)
 }
 
@@ -1076,9 +1077,13 @@ void set_scpcstats(string scalar w, string scalar sel, string scalar outmat, rea
 	}
 	root_q = sqrt(cols(scpc_Wfin) - 1)
 	SE = (proj_norm / (root_q * sqrt(rows(scpc_Wfin)))) * scale
+	if (SE == 0 | missing(SE)) {
+		errprintf("SCPC standard error is outside the floating-point range\n")
+		exit(999)
+	}
 	tau = beta / SE
 	if (missing(tau)) {
-		errprintf("SCPC t-statistic exceeds the numeric range\n")
+		errprintf("SCPC t-statistic is outside the floating-point range\n")
 		exit(999)
 	}
 	pval=maxrp(scpc_Omsfin,cols(scpc_Wfin)-1,abs(tau)/root_q)
@@ -1436,6 +1441,7 @@ end
 
 capture program drop scpc
 program scpc, eclass sortpreserve
+	version 16.0
 	syntax , ///
 		[ ///
 			cvs	///

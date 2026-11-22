@@ -5,7 +5,8 @@ It is implemented as a postestimation command that can be used after the STATA c
 
 ## Install a local checkout
 
-Run this in Stata with the absolute path to this checkout.
+This development checkout requires Stata 16 or later. Run this in Stata with
+the absolute path to the checkout.
 
 ```stata
 net install scpc, replace from("/path/to/spatial-spur/scpc-stata/src")

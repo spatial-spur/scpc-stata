@@ -1,7 +1,7 @@
 * Run from the shared workspace root or pass its path as the first argument.
 clear all
 set more off
-version 14
+version 16.0
 args repo_root
 if `"`repo_root'"' == "" local repo_root "."
 capture confirm file "`repo_root'/scpc-stata/src/scpc.ado"
@@ -457,5 +457,6 @@ foreach backend in fallback rust {
     assert reldif(base[1, 2], shifted[1, 2]) < 1e-10
 }
 mata: assert(max(scpc_decay_grid(1, 1.7)) == 1.7)
+mata: assert(scpc_decay_grid(8e307, 8e307) == 8e307)
 
 display "Conditional OLS cutoff tests passed."
