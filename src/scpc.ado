@@ -1667,6 +1667,14 @@ program scpc, eclass sortpreserve
 			}
 		}
 
+		if `plugin_ok' == 1 {
+			capture plugin call _scpc_rust_plugin, require_spec 0.3.6
+			if _rc != 0 {
+				local plugin_ok 0
+				local plugin_reason "loaded scpc_rust.plugin needs methods spec 0.3.6 or newer. Install the matching plugin and restart Stata"
+			}
+		}
+
 		local rust_eligible 1
 		local rust_reason ""
 		if `plugin_ok' == 0 {
