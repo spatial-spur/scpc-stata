@@ -701,7 +701,7 @@ assert _rc == 198
 assert_user_state_preserved, exp_vars("`id_vars'") exp_cmd("regress") exp_depvar("y") exp_n(200) exp_samp(`samp_id')
 
 capture scpc, backend(fallback)
-assert _rc == 999
+assert _rc == 198
 assert_user_state_preserved, exp_vars("`id_vars'") exp_cmd("regress") exp_depvar("y") exp_n(200) exp_samp(`samp_id')
 
 _estimates drop _all
@@ -851,7 +851,7 @@ regress y x1 x2, robust
 capture scpc, avc(0.03) backend(rust)
 assert _rc == 198
 capture scpc, avc(0.03) backend(fallback)
-assert _rc == 999
+assert _rc == 198
 capture scpc, avc(0.03)
 assert _rc == 198
 

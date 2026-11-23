@@ -9,9 +9,9 @@ program _scpc_rust_plugin, plugin using(`"`oldplugin'"')
 plugin call _scpc_rust_plugin, ping
 if "`incompatibility'" == "methods" {
     plugin call _scpc_rust_plugin, ping_v7
-    capture plugin call _scpc_rust_plugin, require_spec 0.3.8
+    capture plugin call _scpc_rust_plugin, require_spec 0.3.9
     assert _rc != 0
-    local reason "methods spec 0.3.8"
+    local reason "methods spec 0.3.9"
 }
 else {
     capture plugin call _scpc_rust_plugin, ping_v7

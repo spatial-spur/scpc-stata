@@ -806,6 +806,10 @@ void LNsetWc0(real matrix s,real scalar avc,real matrix W, real scalar c0, real 
 		distvec[(i-1)*scpc_m*(scpc_m-1)/2+1::i*scpc_m*(scpc_m-1)/2]=scpc_lvech(ms[i].mat)
 	}
 	floor_corr=mean(distvec :== 0)
+	if (avc <= floor_corr) {
+		errprintf("Target correlation avc=%g must exceed the pooled landmark co-located-pair fraction %8.6f.\n", avc, floor_corr)
+		exit(198)
+	}
 	minavc_eff=floor_corr + (1 - floor_corr) * scpc_minavc
 	c0=getc0fromavc(distvec,avc)
 	cmax=getc0fromavc(distvec,minavc_eff)
@@ -1018,6 +1022,13 @@ void setOmsWfin(real scalar avc0, string scalar sel, string scalar latlong)
 		scpc_distmat = scpc_getdistmat(scpc_geometry)
 		dvec = scpc_lvech(scpc_distmat)
 		floor_corr = mean(dvec :== 0)
+		if (avc0 <= floor_corr) {
+			real scalar sites, ii
+			sites = 1
+			for (ii=2; ii<=n; ii++) sites = sites + !any(scpc_distmat[ii,1..(ii-1)] :== 0)
+			errprintf("Target correlation avc=%g must exceed the co-located-pair fraction %8.6f (%g distinct locations).\n", avc0, floor_corr, sites)
+			exit(198)
+		}
 		minavc_eff = floor_corr + (1 - floor_corr) * scpc_minavc
 		scpc_c0 = getc0fromavc(dvec, avc0)
 		scpc_cmax = getc0fromavc(dvec, minavc_eff)
@@ -1672,10 +1683,10 @@ program scpc, eclass sortpreserve
 		}
 
 		if `plugin_ok' == 1 {
-			capture plugin call _scpc_rust_plugin, require_spec 0.3.8
+			capture plugin call _scpc_rust_plugin, require_spec 0.3.9
 			if _rc != 0 {
 				local plugin_ok 0
-				local plugin_reason "loaded scpc_rust.plugin needs methods spec 0.3.8 or newer. Install the matching plugin and restart Stata"
+				local plugin_reason "loaded scpc_rust.plugin needs methods spec 0.3.9 or newer. Install the matching plugin and restart Stata"
 			}
 		}
 
